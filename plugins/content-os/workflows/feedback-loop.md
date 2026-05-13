@@ -199,9 +199,9 @@ PUBLISHED (AŞAMA 10)
 │  2. "___________________________________"          │
 │     → Sebep: ___________________________________   │
 │                                                     │
-│  SES KURALI İHLALİ VAR MI?                        │
+│  ÜSLUP KURALI İHLALİ VAR MI?                        │
 │  [ ] Yasak kalıp kullanıldı: ___________________ │
-│  [ ] Ses kuralı ihlal edildi: __________________  │
+│  [ ] Üslup kuralı ihlal edildi: __________________  │
 │                                                     │
 └─────────────────────────────────────────────────────┘
 ```
@@ -262,7 +262,7 @@ PUBLISHED (AŞAMA 10)
 |--------|-------|-------|
 | `stores/hooks/` | Yeni hook ekle | Bookmark sürücüsü kalıbı |
 | `stores/proof/` | Kanıt güncelle | Yeni metrikler varsa |
-| `voice/voice-profile.md` | Ses kuralı ekle/güncelle | Ses içgörülerinden |
+| `voice/voice-profile.md` | Üslup kuralı ekle/güncelle | Üslup içgörülerinden |
 | `voice/master-avoid-slop.md` | Yeni slop ekle | Tespit edilen kalıp |
 | `workflows/feedback-loop.md` | Sistem kalıbı güncelle | Kalıcı öğrenim |
 

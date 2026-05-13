@@ -12,12 +12,12 @@ No run feedback available.
 ## Voice Profile Summary
 # Voice Profile — Yunus Güngör
 
-> ASIC/chip tasarımı alanında mühendis sesini yansıtan ses DNA'sı.
+> ASIC/chip tasarımı alanında mühendis üslubunu yansıtan üslup profili.
 > Her içerik üretiminden önce okunur.
 
 ---
 
-## Ses Kurallarım (Her Zaman Uygulanır)
+## Üslup Kurallarım (Her Zaman Uygulanır)
 
 **1. Somut rakam, soyut laf yerine.**
 Her cümlede en az bir somut veri olmalı. "iyi değil" yerine "%40 daha yavaş". 

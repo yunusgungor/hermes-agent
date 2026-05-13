@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.syntax import Syntax
-from .content_os_core import ContentOSCore
+from content_os_core import ContentOSCore
 
 console = Console()
 

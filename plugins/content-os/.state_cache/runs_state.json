@@ -1,0 +1,35 @@
+{
+  "2026-05-openlane-drc-fix": {
+    "slug": "2026-05-openlane-drc-fix",
+    "title": "Bir mühendis arkadaşın OpenLane DRC hatası — nasıl çözdük?",
+    "state": "brief_ready",
+    "route": "REWRITE",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "",
+    "updated": "2026-05-13T19:22:53.442804",
+    "source_type": "belirsiz"
+  },
+  "2026-05-knowgraph-projesi-graph-rag-mcp-server-for-code": {
+    "slug": "2026-05-knowgraph-projesi-graph-rag-mcp-server-for-code",
+    "title": "KnowGraph projesi: Graph RAG & MCP Server for Code — kodunuzu bir knowledge graph olarak anlayan açık kaynak MCP server",
+    "state": "drafting",
+    "route": "ORIGINAL",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "",
+    "updated": "2026-05-13T19:22:53.451428",
+    "source_type": "belirsiz"
+  },
+  "2026-05-riscv-timing-violation": {
+    "slug": "2026-05-riscv-timing-violation",
+    "title": "RISC-V pipeline timing violation debug etmek icin 3 adim",
+    "state": "idea_review",
+    "route": "ORIGINAL",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "",
+    "updated": "2026-05-13T19:22:53.457876",
+    "source_type": "belirsiz"
+  }
+}

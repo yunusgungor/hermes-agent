@@ -11,4 +11,4 @@
 - **Title:** KnowGraph projesi: Graph RAG & MCP Server for Code — kodunuzu bir knowledge graph olarak anlayan açık kaynak MCP server
 
 state: drafting
-updated: 2026-05-13T17:37:19.606257
+updated: 2026-05-13T19:25:56.643642

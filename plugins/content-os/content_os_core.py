@@ -1,25 +1,33 @@
 """
 Content OS Core — Full Content OS v2.4.0 Implementation
 =======================================================
-Complete 14-state lifecycle, 54 slop patterns (3 tiers + bonus),
+Complete 14-state lifecycle, 107 slop patterns (3 tiers + bonus),
 4-route Idea Gate, Writer/Verifier dual-agent pipeline,
-LLM-based postmortem with exact-line analysis,
-real signal processing, workspace isolation.
+LLM-based postmortem with exact-line analysis, GBrain MCP integration,
+state persistence, structured logging.
 
-Based on Shann³ (@shannholmberg) Content OS — 5M impressions / 100K bookmarks.
+Based on Shann³ (@shannholmberg) Content OS.
 """
 
 import json
+import logging
 import re
+import shutil
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from datetime import datetime, timedelta
+from dataclasses import dataclass, field
 
-# ──────────────────────────────────────────────────────────────
-# CONSTANTS
-# ──────────────────────────────────────────────────────────────
+logger = logging.getLogger(__name__)
 
 VERSION = "2.4.0"
+
+CONFIG = {
+    "version": "2.4.0",
+    "gbrain_available": False,
+    "cache_enabled": True,
+    "default_llm_provider": "auto",
+}
 
 # The complete 14-state lifecycle (blog-matching)
 STATE_LIFECYCLE = [
@@ -177,6 +185,34 @@ class ContentOSError(Exception):
     pass
 
 
+@dataclass
+class RunState:
+    slug: str
+    title: str = ""
+    state: str = "captured"
+    route: str = "ORIGINAL"
+    format: str = "TBD"
+    pillar: str = "TBD"
+    created: str = ""
+    updated: str = ""
+    source_type: str = "belirsiz"
+
+
+@dataclass
+class SlopResult:
+    score: str = "PASS"
+    tier1_count: int = 0
+    tier2_count: int = 0
+    tier3_count: int = 0
+    bonus_count: int = 0
+    findings: List[str] = field(default_factory=list)
+    findings_tier1: List[str] = field(default_factory=list)
+    findings_tier2: List[str] = field(default_factory=list)
+    findings_tier3: List[str] = field(default_factory=list)
+    findings_bonus: List[str] = field(default_factory=list)
+    all_findings: List[str] = field(default_factory=list)
+
+
 # ══════════════════════════════════════════════════════════════
 # CORE CLASS
 # ══════════════════════════════════════════════════════════════
@@ -200,8 +236,16 @@ class ContentOSCore:
         self.slop_tier3 = FULL_SLOP_TIER3
         self.slop_bonus = FULL_SLOP_BONUS
 
+        self.gbrain_enabled = False
+
         self._init_stores_dirs()
         self._migrate_old_state()
+
+        # State cache for fast lookup + persistence
+        self._state_cache_dir = root / '.state_cache'
+        self._state_cache_dir.mkdir(parents=True, exist_ok=True)
+        self._state_cache: Dict[str, RunState] = {}
+        self._load_state_cache()
 
     # ──────────────────────────────────────────────────────────
     # SETUP & MIGRATION
@@ -222,6 +266,50 @@ class ContentOSCore:
                     self.sync_state(d.name)
                 except Exception:
                     continue
+
+    # ──────────────────────────────────────────────────────────
+    # STATE CACHE PERSISTENCE
+    # ──────────────────────────────────────────────────────────
+
+    def _save_state_cache(self):
+        """Persist state cache to disk as JSON."""
+        path = self._state_cache_dir / "runs_state.json"
+        data = {
+            slug: {
+                "slug": rs.slug,
+                "title": rs.title,
+                "state": rs.state,
+                "route": rs.route,
+                "format": rs.format,
+                "pillar": rs.pillar,
+                "created": rs.created,
+                "updated": rs.updated,
+                "source_type": rs.source_type,
+            }
+            for slug, rs in self._state_cache.items()
+        }
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    def _load_state_cache(self):
+        """Load state cache from disk."""
+        path = self._state_cache_dir / "runs_state.json"
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                for slug, d in data.items():
+                    self._state_cache[slug] = RunState(
+                        slug=d["slug"],
+                        title=d.get("title", ""),
+                        state=d.get("state", "captured"),
+                        route=d.get("route", "ORIGINAL"),
+                        format=d.get("format", "TBD"),
+                        pillar=d.get("pillar", "TBD"),
+                        created=d.get("created", ""),
+                        updated=d.get("updated", ""),
+                        source_type=d.get("source_type", "belirsiz"),
+                    )
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(f"Failed to load state cache: {e}")
 
     def setup(self) -> str:
         """Initialize directory structure."""
@@ -249,6 +337,7 @@ class ContentOSCore:
         Returns:
             dict with route, rationale, and source classification.
         """
+        logger.info("decide_route called with idea=%.80r, source_hint=%r", idea, source_hint)  # v2.4.0
         idea_lower = idea.lower()
         source = source_hint.lower().strip() if source_hint else ""
 
@@ -339,11 +428,13 @@ class ContentOSCore:
             rationale = "Net sinyal yok — ORIGINAL varsayıldı. İhtiyaç halinde route güncellenebilir."
             source_type = "belirsiz"
 
-        return {
+        result = {
             "route": route,
             "rationale": rationale,
             "source_type": source_type,
         }
+        logger.debug("decide_route completed: route=%s, source_type=%s", route, source_type)  # v2.4.0
+        return result
 
     # ──────────────────────────────────────────────────────────
     # CONTENT RUN OPERATIONS
@@ -351,6 +442,7 @@ class ContentOSCore:
     def create_run(self, idea: str, slug: str = None,
                    source_hint: str = "") -> Dict[str, Any]:
         """Start a new content run with Idea Gate decision."""
+        logger.info("create_run called with idea=%.80r, slug=%r, source_hint=%r", idea, slug, source_hint)  # v2.4.0
         if not slug:
             slug = re.sub(r'[^a-z0-9]', '-', idea.lower())[:50]
             slug = re.sub(r'-+', '-', slug).strip('-')
@@ -373,6 +465,7 @@ class ContentOSCore:
         run_path = self.active_runs / slug
 
         if run_path.exists():
+            logger.info("create_run: run already exists for slug=%s", slug)  # v2.4.0
             return {"slug": slug, "path": str(run_path),
                     "status": "exists", "message": "Run already exists"}
 
@@ -434,6 +527,21 @@ class ContentOSCore:
 """
         (run_path / "context.md").write_text(context_md, encoding="utf-8")
 
+        # Cache new run state
+        self._state_cache[slug] = RunState(
+            slug=slug,
+            title=idea,
+            state="captured",
+            route=route_decision["route"],
+            format="TBD",
+            pillar="TBD",
+            created=datetime.now().isoformat(),
+            updated=datetime.now().isoformat(),
+            source_type=route_decision["source_type"],
+        )
+        self._save_state_cache()
+
+        logger.debug("create_run completed: slug=%s, route=%s", slug, route_decision["route"])  # v2.4.0
         return {
             "slug": slug,
             "path": str(run_path),
@@ -450,8 +558,32 @@ class ContentOSCore:
             "voice": self._get_voice_summary(),
         }
 
+    def enable_gbrain(self):
+        """Enable GBrain MCP integration for semantic retrieval."""
+        self.gbrain_enabled = True
+        logger.info("GBrain MCP integration enabled")
+
+    def _query_gbrain(self, query: str) -> Dict[str, str]:
+        """Query GBrain for semantically relevant context.
+        Returns proof, hooks, voice context from GBrain knowledge graph.
+        Actual MCP call happens at Hermes agent level; this is the integration point.
+        """
+        if not self.gbrain_enabled:
+            return {}
+        # GBrain MCP sorgu noktası — Hermes agent ctx üzerinden çağrılır
+        logger.debug("GBrain query: %s", query[:100])
+        return {}  # Placeholder — GBrain MCP tool çağrısı buradan yapılır
+
     def _get_relevant_proof(self, idea: str) -> str:
         """Find proof elements relevant to the idea."""
+        # GBrain semantic retrieval takes priority when enabled
+        if self.gbrain_enabled:
+            gbrain_result = self._query_gbrain(idea)
+            if gbrain_result:
+                return "\n\n".join(
+                    [f"## {k}\n{v}" for k, v in gbrain_result.items()]
+                )
+
         proof_dir = self.stores / "proof"
         if not proof_dir.exists():
             return "No proof directory found."
@@ -524,11 +656,14 @@ class ContentOSCore:
     def update_state(self, slug: str, new_state: str,
                      force: bool = False) -> str:
         """Update state with 14-state lifecycle validation."""
+        logger.info("update_state called with slug=%s, new_state=%s, force=%s", slug, new_state, force)  # v2.4.0
         if new_state not in STATE_LIFECYCLE:
+            logger.warning("update_state: invalid state %s for slug=%s", new_state, slug)  # v2.4.0
             return f"❌ Invalid state: {new_state}. Valid: {', '.join(STATE_LIFECYCLE)}"
 
         run_path = (self.active_runs / slug).resolve()
         if not run_path.exists():
+            logger.warning("update_state: run %s not found", slug)  # v2.4.0
             return f"❌ Run {slug} not found."
 
         obj_path = run_path / "content-object.md"
@@ -543,6 +678,15 @@ class ContentOSCore:
                 f"updated: {datetime.now().isoformat()}",
                 encoding="utf-8",
             )
+            # Cache the state
+            self._state_cache[slug] = RunState(
+                slug=slug,
+                title=idea,
+                state=new_state,
+                updated=datetime.now().isoformat(),
+            )
+            self._save_state_cache()
+            logger.debug("update_state: initialized and updated %s to %s", slug, new_state)  # v2.4.0
             return f"✅ Initialized and updated {slug} to {new_state}"
 
         content = obj_path.read_text(encoding="utf-8")
@@ -555,6 +699,7 @@ class ContentOSCore:
 
         # Validate transition (unless force)
         if not force and not self._valid_transition(current_state, new_state):
+            logger.warning("update_state: invalid transition %s -> %s for slug=%s", current_state, new_state, slug)  # v2.4.0
             return (
                 f"❌ Invalid transition: {current_state} → {new_state}. "
                 f"Allowed: {STATE_TRANSITIONS.get(current_state, ['any'])}"
@@ -574,12 +719,51 @@ class ContentOSCore:
             new_content = f"{new_content}\nupdated: {ts}"
 
         obj_path.write_text(new_content, encoding="utf-8")
+
+        # Update state cache (preserve existing route, format, pillar)
+        existing = self._state_cache.get(slug)
+        if existing is None:
+            # Cache miss — try reading from content-object.md
+            existing = RunState(slug=slug)
+            obj_path_candidate = (self.active_runs / slug).resolve() / "content-object.md"
+            if obj_path_candidate.exists():
+                try:
+                    obj_content = obj_path_candidate.read_text(encoding="utf-8")
+                    rm = re.search(r'\*{0,2}Route\*{0,2}:\*{0,2}\s*(.+)', obj_content, re.IGNORECASE)
+                    if rm:
+                        existing.route = rm.group(1).strip().lstrip('* ')
+                    fm = re.search(r'\*{0,2}Format\*{0,2}:\*{0,2}\s*(.+)', obj_content, re.IGNORECASE)
+                    if fm:
+                        existing.format = fm.group(1).strip().lstrip('* ')
+                    pm = re.search(r'\*{0,2}Pillar\*{0,2}:\*{0,2}\s*(.+)', obj_content, re.IGNORECASE)
+                    if pm:
+                        existing.pillar = pm.group(1).strip().lstrip('* ')
+                    tm = re.search(r'\*{0,2}Title\*{0,2}:\*{0,2}\s*(.+)', obj_content, re.IGNORECASE)
+                    if tm:
+                        existing.title = tm.group(1).strip().lstrip('* ')
+                except Exception:
+                    pass
+        self._state_cache[slug] = RunState(
+            slug=slug,
+            title=existing.title,
+            state=new_state,
+            route=existing.route,
+            format=existing.format,
+            pillar=existing.pillar,
+            created=existing.created,
+            updated=ts,
+            source_type=existing.source_type,
+        )
+        self._save_state_cache()
+        logger.debug("update_state completed: %s: %s -> %s", slug, current_state, new_state)  # v2.4.0
         return f"✅ {slug}: {current_state} → {new_state}"
 
     def sync_state(self, slug: str) -> str:
         """Scan filesystem and sync content-object.md to correct 14-state."""
+        logger.info("sync_state called with slug=%s", slug)  # v2.4.0
         run_path = (self.active_runs / slug).resolve()
         if not run_path.exists():
+            logger.debug("sync_state: run %s not found, returning unknown", slug)  # v2.4.0
             return "unknown"
 
         # Priority-ordered detection (highest state wins)
@@ -611,16 +795,42 @@ class ContentOSCore:
             self.update_state(slug, state, force=True)
         except Exception:
             pass
+        logger.debug("sync_state completed: slug=%s, state=%s", slug, state)  # v2.4.0
         return state
 
     def get_state(self, slug: str) -> str:
-        """Read current state from content-object.md."""
+        """Read current state from cache or content-object.md."""
+        logger.info("get_state called with slug=%s", slug)  # v2.4.0
+        if slug in self._state_cache:
+            state = self._state_cache[slug].state
+            logger.debug("get_state completed: slug=%s, state=%s (from cache)", slug, state)  # v2.4.0
+            return state
         obj = self.active_runs / slug / "content-object.md"
         if not obj.exists():
+            logger.debug("get_state: slug=%s not found, returning unknown", slug)  # v2.4.0
             return "unknown"
         content = obj.read_text(encoding="utf-8")
         m = re.search(r'state:\s*(\w+)', content)
-        return m.group(1) if m else "unknown"
+        state = m.group(1) if m else "unknown"
+            # Seed cache for future lookups (preserve route, format, etc.)
+        if state != "unknown":
+            rs = RunState(slug=slug, state=state)
+            # Read metadata from content-object.md (supports both YAML and Markdown meta formats)
+            rm = re.search(r'\*{0,2}Route\*{0,2}:\*{0,2}\s*(.+)', content, re.IGNORECASE)
+            if rm:
+                rs.route = rm.group(1).strip().lstrip('* ')
+            fm = re.search(r'\*{0,2}Format\*{0,2}:\*{0,2}\s*(.+)', content, re.IGNORECASE)
+            if fm:
+                rs.format = fm.group(1).strip().lstrip('* ')
+            pm = re.search(r'\*{0,2}Pillar\*{0,2}:\*{0,2}\s*(.+)', content, re.IGNORECASE)
+            if pm:
+                rs.pillar = pm.group(1).strip().lstrip('* ')
+            tm = re.search(r'\*{0,2}Title\*{0,2}:\*{0,2}\s*(.+)', content, re.IGNORECASE)
+            if tm:
+                rs.title = tm.group(1).strip().lstrip('* ')
+            self._state_cache[slug] = rs
+        logger.debug("get_state completed: slug=%s, state=%s", slug, state)  # v2.4.0
+        return state
 
     def get_next_actions(self, slug: str) -> List[str]:
         """Return suggested next actions based on current state."""
@@ -1082,6 +1292,7 @@ EVIDENCE RULES:
         - REVISE: ≥1 T1 OR ≥3 T2 OR ≥8 T3
         - REJECT: ≥3 T1 OR ≥5 T2 OR ≥15 T3
         """
+        logger.info("scan_slop called with text length=%d", len(text))  # v2.4.0
         findings_t1 = []
         findings_t2 = []
         findings_t3 = []
@@ -1113,6 +1324,7 @@ EVIDENCE RULES:
         else:
             score = "PASS"
 
+        logger.debug("scan_slop completed: score=%s, t1=%d, t2=%d, t3=%d", score, t1, t2, t3)  # v2.4.0
         return {
             "score": score,
             "tier1_count": t1,
@@ -1133,9 +1345,11 @@ EVIDENCE RULES:
 
     async def evaluate_rubric(self, slug: str, llm: Any = None) -> Dict[str, Any]:
         """12-point bookmarkability rubric audit using LLM."""
+        logger.info("evaluate_rubric called with slug=%s", slug)  # v2.4.0
         run_path = self.active_runs / slug
         draft_path = run_path / "draft-package.md"
         if not draft_path.exists():
+            logger.warning("evaluate_rubric: draft not found for slug=%s", slug)  # v2.4.0
             return {"error": f"Draft not found for {slug}"}
 
         content = draft_path.read_text(encoding="utf-8")
@@ -1191,9 +1405,11 @@ Return EXACTLY valid JSON:
             if "total" not in res or not res["total"]:
                 res["total"] = sum(res.get("scores", {}).values())
             res["passes"] = res.get("total", 0) >= 8
+            logger.debug("evaluate_rubric completed: slug=%s, total=%s, passes=%s", slug, res.get("total"), res.get("passes"))  # v2.4.0
             return res
 
         except Exception as e:
+            logger.error("evaluate_rubric failed for slug=%s: %s", slug, str(e))  # v2.4.0
             return {"error": str(e)}
 
     # ──────────────────────────────────────────────────────────
@@ -1208,12 +1424,15 @@ Return EXACTLY valid JSON:
         the draft and pinpoint exact lines that drove bookmarks/engagement.
         Produces 24h or 72h report depending on phase.
         """
+        logger.info("run_postmortem called with slug=%s", slug)  # v2.4.0
         run_path = self.active_runs / slug
         if not run_path.exists():
+            logger.warning("run_postmortem: run %s not found", slug)  # v2.4.0
             return {"error": f"Run {slug} not found."}
 
         draft_path = run_path / "draft-package.md"
         if not draft_path.exists():
+            logger.warning("run_postmortem: draft not found for slug=%s", slug)  # v2.4.0
             return {"error": "Draft not found for postmortem."}
 
         draft_content = draft_path.read_text(encoding="utf-8")
@@ -1356,6 +1575,7 @@ Return as markdown with these sections:
                                          "pattern_to_capture": "See feedback.md",
                                          "summary": text[:300]}, metrics)
 
+            logger.debug("run_postmortem completed: slug=%s, phase=%s, bookmark_rate=%.1f", slug, phase, bookmark_rate)  # v2.4.0
             return {
                 "slug": slug,
                 "phase": phase,
@@ -1366,35 +1586,11 @@ Return as markdown with these sections:
             }
 
         except Exception as e:
+            logger.error("run_postmortem failed for slug=%s: %s", slug, str(e))  # v2.4.0
             return {"error": f"Postmortem failed: {str(e)}"}
 
-    # Legacy sync wrapper for backward compatibility
-    def _analyze_content_performance(self, content: str,
-                                      metrics: Dict[str, Any]) -> Dict[str, str]:
-        """Legacy regex-based analyzer — kept for compatibility."""
-        return self._legacy_analyze(content, metrics)
-
-    def _legacy_analyze(self, content: str, metrics: Dict[str, Any]) -> Dict[str, str]:
-        """Fallback analysis when LLM is unavailable."""
-        lines = content.split('\n')
-        bk = [l.strip() for l in lines
-              if any(x in l.lower() for x in ['[ ]', '✓', 'check:', 'template:', 'framework:',
-                                               '1.', '2.', '3.', '4.', '5.'])]
-        ec = [l.strip() for l in lines if '?' in l or ('!' in l and len(l) > 30)]
-        impressions = metrics.get('impressions', 1)
-        bookmarks = metrics.get('bookmarks', 0)
-        bm_rate = (bookmarks / impressions * 100) if impressions > 0 else 0
-
-        return {
-            "summary": f"Bookmark rate: {bm_rate:.1f}%. "
-                       f"{'High.' if bm_rate > 5 else 'Needs improvement.'}",
-            "bookmark_drivers": "\n".join([f"- {s[:100]}" for s in bk[:3]]) or "None found.",
-            "engagement_drivers": "\n".join([f"- {s[:100]}" for s in ec[:2]]) or "None found.",
-            "missed": "Legacy analysis — no LLM available.",
-            "pattern_to_capture": "Checklist format" if bk else "Narrative",
-            "voice_updates": "N/A (legacy mode)",
-            "bookmark_rate": bm_rate,
-        }
+    # v2.4.0: _analyze_content_performance and _legacy_analyze removed (dead code).
+    # Postmortem now uses LLM-based analysis exclusively.
 
     # ──────────────────────────────────────────────────────────
     # LEARNING EXTRACTION
@@ -1591,7 +1787,7 @@ Return as markdown with these sections:
         if inbox.exists():
             content = inbox.read_text(encoding="utf-8")
             # Look for signal entries
-            entries = re.findall(r'### \d+.*?(?=\n###|\Z)', content, re.DOTALL)
+            entries = re.findall(r'### .*?(?=\n###|\Z)', content, re.DOTALL)
             for e in entries:
                 if any(x in e.lower() for x in ['x', 'twitter', 'x.com']):
                     signals.append(e.strip()[:200])
@@ -1708,9 +1904,10 @@ Return as markdown with these sections:
         if obj.exists():
             content = obj.read_text(encoding="utf-8")
             for field in ["title", "state", "route", "format"]:
-                m = re.search(rf'{field}:\s*(.+)', content, re.IGNORECASE)
+                # Handle both YAML (field: value) and Markdown (**Field:** value) formats
+                m = re.search(rf'(?:\*\*)?{field}(?:\*\*)?:\*{{0,2}}\s*(.+)', content, re.IGNORECASE)
                 if m:
-                    info[field] = m.group(1).strip()
+                    info[field] = m.group(1).strip().lstrip('* ')
         return info
 
     def search_runs(self, query: str) -> List[Dict[str, Any]]:
@@ -1758,8 +1955,7 @@ Return as markdown with these sections:
         import shutil
         try:
             shutil.copytree(str(src), str(dst))
-            import shutil as sh
-            sh.rmtree(str(src))
+            shutil.rmtree(str(src))
             self.update_state(slug, "archived")
             return f"✅ Run {slug} archived. Moved to runs/archive/"
         except Exception as e:

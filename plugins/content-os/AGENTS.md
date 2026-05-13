@@ -25,7 +25,7 @@ Content-os, Hermes'in **General Plugin** sistemi üzerine inşa edilmiştir:
 ├── plugin.yaml              # Plugin manifesti
 ├── SKILL.md                 # Hermes Skill tanımı
 ├── strategy/                # İnsan tarafından düzenlenen (positioning, audience, pillars)
-├── voice/                   # Ses kuralları + slop kontrolü
+├── voice/                   # Üslup kuralları + slop kontrolü
 ├── stores/                  # Ham malzeme deposu (inbox, workboard, ideas, hooks, proof)
 ├── runs/                    # Her içerik objesi = bir run folder
 ├── modules/                 # Writer agent yapılandırması
@@ -215,7 +215,7 @@ hermes content setup
 - ✅ `hermes content learnings` - Önceki run'lardan öğrenilenler
 - ✅ `hermes content patterns` - Run pattern analizi (8 run, 6.2 ortalama bookmarks)
 - ✅ `hermes content context [slug]` - Bağlam oluşturma
-- ✅ `hermes content voice-update` - Ses profili görüntüleme
+- ✅ `hermes content voice-update` - Üslup profili görüntüleme
 
 ### Düzeltilen Bug'lar:
 - PermissionError handling in `get_all_runs()` 

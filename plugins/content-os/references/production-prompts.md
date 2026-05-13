@@ -20,7 +20,7 @@
 | 3 | Verifier Agent | `#verifier-agent` | Taslağı rubric + slop karşılar |
 | 4 | Postmortem Prompt ⭐ | `#postmortem-prompt` | Yayınlanmış post analizi |
 | 5 | Brand Foundation Extraction | `#brand-foundation-extraction` | Ham notlardan strategy çıkarır |
-| 6 | Voice Profile Builder | `#voice-profile-builder` | Ses DNA'sı oluşturur |
+| 6 | Voice Profile Builder | `#voice-profile-builder` | Üslup profili oluşturur |
 
 ---
 
@@ -540,7 +540,7 @@ IMPORTANT NOTES:
 
 ## 6. Voice Profile Builder Prompt
 
-> **Kullanım:** Mevcut içerik analiz edilerek ses profili oluşturulur.
+> **Kullanım:** Mevcut içerik analiz edilerek üslup profili oluşturulur.
 > **Giriş:** En iyi performans gösteren 3-5 post + en kötü performans gösteren 1-2 post.
 
 ```markdown

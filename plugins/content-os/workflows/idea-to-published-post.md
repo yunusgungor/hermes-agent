@@ -139,7 +139,7 @@
 - Hedef: 400-900 token
 - Her alan zorunlu
 - Sadece BU post için geçerli bilgiler
-- Ses kuralları referans olarak dahil, her şey DEĞİL
+- Üslup kuralları referans olarak dahil, her şey DEĞİL
 
 **Çıkış:** `brief.md` — Tam şablon için SKILL.md'ye bakın.
 
@@ -166,7 +166,7 @@ Giriş dosyaları (sırayla oku):
 GÖREV:
 1. Üç dosyayı dikkatle oku
 2. brief'e göre içeriği taslakla
-3. Ses kurallarını tam olarak takip et
+3. Üslup kurallarını tam olarak takip et
 4. rubric'in hangi satırının karşılanamadığını dürüstçe bildir
 5. draft package formatında çıktı ver
 
@@ -196,7 +196,7 @@ open_loops_flagged:
 - (yoksa boş)
 
 voice_check:
-- Tüm 5 ses kuralına uyuldu: [evet/hayır]
+- Tüm 5 üslup kuralına uyuldu: [evet/hayır]
 - Yasaklı kalıp kullanıldı: [evet/hayır — listele]
 ```
 

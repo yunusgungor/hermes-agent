@@ -98,7 +98,7 @@ content-os/
 │   ├── audience.md            — Hedef kitle (tek kişi)
 │   └── pillars.md             — İçerik pazarı
 │
-└── voice/                     ← Ses kuralları + slop kontrolü
+└── voice/                     ← Üslup kuralları + slop kontrolü
     ├── voice-profile.md       — 5 kural + 5 yasak
     └── master-avoid-slop.md   — 54 kalıp özeti
 ```
@@ -161,7 +161,7 @@ Signal Layer (sinyaller)
 | `status` | Aktif run'ların state'lerini göster |
 | `audit` | Sistem dizin yapısını kontrol et |
 | `signal [x\|rss]` | Sinyal taraması yap |
-| `voice-update` | Ses profilini göster (güncel) |
+| `voice-update` | Üslup profilini göster (güncel) |
 | `setup` | Etkileşimli kurulum |
 | `status` | Plugin durumu |
 
@@ -195,7 +195,7 @@ birleştirilip context sağlanır.
 - Her brief/draft öncesi referans olarak kullanılabilir
 
 ### 4. Dynamic Voice Evolution
-- `voice-update`: Ses profilini gösterir
+- `voice-update`: Üslup profilini gösterir
 - Voice kuralları ve yasaklar otomatik applied
 - Referans post'lar ve kanıt türleri dokümante
 

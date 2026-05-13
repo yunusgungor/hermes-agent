@@ -90,7 +90,7 @@ allowed_toolsets: [web, terminal, file, delegation, xurl, session_search, cronjo
          ▼
   ┌──────────────┐
   │  Feedback     │ ──► 24s (immediate) + 72s (pattern) loop
-  │  Loop         │     → Ses kuralları, hooks/, proof/ güncellenir
+│  │  Loop         │     → Üslup kuralları, hooks/, proof/ güncellenir
   └──────────────┘
 ```
 
@@ -309,7 +309,7 @@ FIKIR GİRİŞİ
 |------|--------|-------------------|---------|
 | **ORIGINAL** | Dahili: Kişisel OS, notlar, günlükler, sesli notlar, bir süredir düşündüğün fikirler | positioning + proof bank + pillars | Dış kaynak YOK. Yüksek zevk yatırımı gerekir. En değerli içerik tipi. |
 | **REPURPOSE** | Dahili: Mevcut yayınlanmış içerik | Yayınlanmış içerik arşivi | Seri türevleri, makaleden thread, hit post'a self-QRT, blog'dan X post'u |
-| **REWRITE** | Harici: Sinyal katmanı (değerli tweet, makale, podcast transkripti, framework) | avoid-slop doc + ses kuralları | Kendi POV ve sesinle çevir. Açıkça belirt: ne korunacak, kime atıf verilecek. |
+| **REWRITE** | Harici: Sinyal katmanı (değerli tweet, makale, podcast transkripti, framework) | avoid-slop doc + üslup kuralları | Kendi POV ve üslubunla çevir. Açıkça belirt: ne korunacak, kime atıf verilecek. |
 | **RESEARCH+IDEATE** | Keşif + dahili karışımı | Yok (stores/ideas/'a geri besleme) | Konuyu araştır, kalıpları incele. **Çıktı: post DEĞİL, fikir listesi.** |
 
 ---
@@ -346,7 +346,7 @@ FIKIR GİRİŞİ
 │
 ├── voice/                                ← Ses ve kalite kontrolü
 │   │
-│   ├── voice-profile.md                  ← Ses DNA'sı. 5 kural + 5 yasak + 2-3 referans.
+│   ├── voice-profile.md                  ← Üslup profili. 5 kural + 5 yasak + 2-3 referans.
 │   │                                      Her Writer/Verifier çağrısından önce yüklenir.
 │   │
 │   └── master-avoid-slop.md              ← 54 AI slop kalıbı, 3 şiddet seviyesi.
@@ -612,7 +612,7 @@ Tam prompt metinleri: `references/production-prompts.md`
 | # | Prompt | Amaç | Çıktı |
 |---|--------|------|-------|
 | 1 | **Research Agent** | Sinyal katmanını tarar | `stores/inbox`'a structured signal entries |
-| 2 | **Writer Agent** | brief.md + ses kuralları → taslak | `draft-package.md` (taslak + self-assessment + slop check + open loops) |
+| 2 | **Writer Agent** | brief.md + üslup kuralları → taslak | `draft-package.md` (taslak + self-assessment + slop check + open loops) |
 | 3 | **Verifier Agent** | Taslağı rubric + slop karşılar | `verifier-report.md` (satır bazlı bulgular + VERDICT) |
 | 4 | **Postmortem Prompt ⭐** | Yayınlanmış post'ı analiz eder | Tam satırları işaret ederek neyin çalıştığını bulur |
 
@@ -766,7 +766,7 @@ mkdir -p /content-os/{strategy,voice,stores/{ideas,hooks,proof,feedback},runs/{a
 
 **`voice/voice-profile.md`** şablonu:
 ```
-SES KURALLARIM (her zaman uyulur):
+ÜSLUP KURALLARIM (her zaman uyulur):
 1. [Kural 1]
 2. [Kural 2]
 3. [Kural 3]

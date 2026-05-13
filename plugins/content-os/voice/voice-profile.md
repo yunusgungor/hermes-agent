@@ -1,11 +1,11 @@
 # Voice Profile — Yunus Güngör
 
-> ASIC/chip tasarımı alanında mühendis sesini yansıtan ses DNA'sı.
+> ASIC/chip tasarımı alanında mühendis üslubunu yansıtan üslup profili.
 > Her içerik üretiminden önce okunur.
 
 ---
 
-## Ses Kurallarım (Her Zaman Uygulanır)
+## Üslup Kurallarım (Her Zaman Uygulanır)
 
 **1. Somut rakam, soyut laf yerine.**
 Her cümlede en az bir somut veri olmalı. "iyi değil" yerine "%40 daha yavaş". "pahalı" yerine "ticari araca kıyasla 3 kat daha ucuz". Somutluk = güvenilirlik.
@@ -45,14 +45,14 @@ Makine değil insan karar veriyor. "Sistem" yerine "ben bu kararı verdim" veya 
 
 ## Referans Post'larım
 
-**1. [En iyi performans gösteren post — metrik açıklaması buraya]**
-Neden iyi: Somut rakam + kişisel deneyim + uygulanabilir checklist kombinasyonu.
+**1. KnowGraph: Graph RAG & MCP Server for Code**
+Neden iyi: Somut rakam (474 entity, 30s index) + kişisel proje hikayesi + hemen kullanılabilir (pip install) — bookmarkability 11/12.
 
-**2. [İkinci en iyi post]**
-Neden iyi: Beklenmedik angle + somut karşılaştırma.
+**2. RISC-V Timing Closure için 7 Strateji** *(taslak aşamasında)*
+Neden iyi: Beklenmedik angle + adım adım uygulanabilir checklist + gerçek tape-out tecrübesi.
 
-**3. [Üçüncü en iyi post]**
-Neden iyi: "Bunu daha önce bilseydim" hissi yaratan pratik bilgi.
+**3. OpenLane DRC Fix Framework** *(taslak aşamasında)*
+Neden iyi: "Bunu daha önce bilseydim" hissi yaratan pratik bilgi — topluluk issue'larından sentezlenmiş.
 
 ---
 

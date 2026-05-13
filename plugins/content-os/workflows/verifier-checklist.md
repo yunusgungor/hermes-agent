@@ -212,7 +212,7 @@ avoid_slop_findings:
 
 ```
 voice_check:
-- Tüm 5 ses kuralına uyuldu: [evet/hayır]
+- Tüm 5 üslup kuralına uyuldu: [evet/hayır]
   - Kural 1: [uyuldu / ihlal edildi — kanıt]
   - Kural 2: [uyuldu / ihlal edildi — kanıt]
   - Kural 3: [uyuldu / ihlal edildi — kanıt]

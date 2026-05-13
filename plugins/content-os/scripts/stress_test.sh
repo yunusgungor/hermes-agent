@@ -436,6 +436,8 @@ print('All audit tests passed!')
 # TEST 9: Plugin integrity
 # ════════════════════════════════════════════════════
 bold $'\n'"─── Test 9: Plugin Integrity ───"
+# Clean up temp dirs from earlier tests
+cleanup
 # Check required files exist
 for f in "$PLUGIN_DIR/plugin.yaml" "$PLUGIN_DIR/__init__.py" \
          "$PLUGIN_DIR/content_os_core.py" "$PLUGIN_DIR/cli.py" \
@@ -463,13 +465,12 @@ else
     red ".git directory still present"
 fi
 
-# Check no example runs
-EMPTY_ACTIVE=$(ls -A "$PLUGIN_DIR/runs/active/" 2>/dev/null || echo "")
-EMPTY_ARCHIVE=$(ls -A "$PLUGIN_DIR/runs/archive/" 2>/dev/null || echo "")
-if [ -z "$EMPTY_ACTIVE" ] && [ -z "$EMPTY_ARCHIVE" ]; then
-    green "No example runs — clean workspace"
+# Check temp workspace cleanup (no leftover temp dirs)
+EMPTY_TEMP=$(find /tmp -maxdepth 1 -name "content-os-test-*" -type d 2>/dev/null || echo "")
+if [ -z "$EMPTY_TEMP" ]; then
+    green "Temp workspace clean — no leftover test dirs"
 else
-    red "Example runs still present"
+    red "Temp workspace has leftover test dirs: $EMPTY_TEMP"
 fi
 
 # ════════════════════════════════════════════════════

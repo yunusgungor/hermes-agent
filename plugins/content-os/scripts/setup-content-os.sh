@@ -209,7 +209,7 @@ fill_voice() {
     log_step "Voice dosyaları dolduruluyor..."
 
     # voice-profile.md
-    echo -e "\n${BOLD}voice-profile.md — Ses DNA'sı${NC}"
+    echo -e "\n${BOLD}voice-profile.md — Üslup Profili${NC}"
     echo "Önce en iyi post'unuzdan 2-3 cümle yazın (ses örneği olarak):"
     echo ""
     local voice_sample
@@ -223,7 +223,7 @@ $voice_sample
 
 ---
 
-## Ses Kurallarım (Her Zaman Uyulur)
+## Üslup Kurallarım (Her Zaman Uygulanır)
 
 1. **Kural:** _____________________________________________
    *Örnek:* _____________________________________________
@@ -534,13 +534,13 @@ fill_modules_workflows() {
 ## Giriş Dosyaları (Her Zaman Önce Oku)
 
 1. `brief.md` — Writer context packet (posta özel)
-2. `voice-profile.md` — Ses kuralları ve çapaları
+2. `voice-profile.md` — Üslup kuralları ve çapaları
 3. `master-avoid-slop.md` — Kaçınılacak kalıplar
 
 ## Yazım Kuralları
 
 - 400-900 token hedefli brief okunur
-- Ses kurallarına sıkı sıkıya uyulur
+- Üslup kurallarına sıkı sıkıya uyulur
 - Yasaklı kalıplar kontrol edilir
 - Bookmarkable format hedeflenir
 
@@ -679,7 +679,7 @@ content-os/
 | Dosya | Açıklama |
 |-------|---------|
 | \`strategy/positioning.md\` | Tek cümlelik pozisyonlama |
-| \`voice/voice-profile.md\` | Ses DNA'sı (5 kural + 5 yasak) |
+| \`voice/voice-profile.md\` | Üslup Profili (5 kural + 5 yasak) |
 | \`voice/master-avoid-slop.md\` | 54 AI slop kalıbı |
 | \`stores/inbox.md\` | Ham fikirler |
 | \`stores/proof/_INDEX.md\` | Kanıt bankası |

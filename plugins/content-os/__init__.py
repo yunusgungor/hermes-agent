@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import logging
 
-from .content_os_core import ContentOSCore, tool_content_os_manager, tool_content_os_retriever
-from .cli import register_cli
+from content_os_core import ContentOSCore, tool_content_os_manager, tool_content_os_retriever
+from cli import register_cli
 
 logger = logging.getLogger(__name__)
 
