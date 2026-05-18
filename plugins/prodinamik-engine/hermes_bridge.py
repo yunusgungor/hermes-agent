@@ -26,11 +26,19 @@ def _get_engine():
     global _engine
     if _engine is None:
         try:
+            import sys
+            plugin_root = Path(__file__).parent
+            if str(plugin_root) not in sys.path:
+                sys.path.insert(0, str(plugin_root))
+
             from engine.config import ProdinamikConfig
             from engine.runtime import AsyncEngine
+
             cfg = ProdinamikConfig.load()
+            # Point data_dir to plugin's .hermes/
+            cfg.data_dir = str(plugin_root / ".hermes")
             _engine = AsyncEngine(cfg)
-            logger.info("Prodinamik Engine initialized")
+            logger.info(f"Prodinamik Engine initialized (data_dir={cfg.data_dir})")
         except Exception as e:
             logger.error(f"Engine init failed: {e}")
             raise
@@ -638,6 +646,28 @@ def _get_haber_actions() -> Dict[str, callable]:
 def handle_all(args: Dict[str, Any]) -> Dict[str, Any]:
     """Unified handler — dispatches to core or content actions."""
     action = args.get("action", "")
+
+    # ── Special: force-reload engine (hot-reload config changes) ──
+    if action == "_reload_engine":
+        global _engine
+        _engine = None
+        try:
+            import importlib
+            for mod_name in list(sys.modules.keys()):
+                if mod_name.startswith("engine.") and mod_name != "engine":
+                    sys.modules.pop(mod_name, None)
+            for key in ["engine.config", "engine.engine", "engine.runtime"]:
+                sys.modules.pop(key, None)
+            eng = _get_engine()
+            return {
+                "message": "Engine reloaded",
+                "profiles": list(eng.health_snapshot.get("profiles", [])),
+                "active_runs": eng.health_snapshot.get("active_runs", 0),
+                "health_score": eng.health_snapshot.get("health_score", 0),
+            }
+        except Exception as e:
+            import traceback
+            return {"error": f"Engine reload failed: {e}", "traceback": traceback.format_exc()}
 
     # ── Legacy Content-OS aliases ──
     ALIAS_MAP = {

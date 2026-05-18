@@ -174,9 +174,39 @@ def register(ctx: Any) -> None:
 
 def _handle_tool(args: Dict[str, Any], ctx: Any) -> str:
     """Main tool handler — dispatches to hermes_bridge.handle_all."""
+    from . import hermes_bridge
     from .hermes_bridge import handle_all
 
     action = args.get("action", "")
+
+    # Special: force-reload engine (clear singleton cache)
+    if action == "_reload_engine":
+        try:
+            # Step 1: Clear engine singleton
+            hermes_bridge._engine = None
+            # Step 2: Reload engine sub-modules so config defaults are refreshed
+            import importlib
+            for mod_name in list(sys.modules.keys()):
+                if mod_name.startswith("engine.") and mod_name != "engine":
+                    sys.modules.pop(mod_name, None)
+            if "engine.config" in sys.modules:
+                sys.modules.pop("engine.config", None)
+            if "engine.engine" in sys.modules:
+                sys.modules.pop("engine.engine", None)
+            if "engine.runtime" in sys.modules:
+                sys.modules.pop("engine.runtime", None)
+            # Step 3: Re-init engine with fresh config
+            eng = hermes_bridge._get_engine()
+            return json.dumps({
+                "message": "Engine reloaded",
+                "profiles": list(eng.health_snapshot.get("profiles", [])),
+                "active_runs": eng.health_snapshot.get("active_runs", 0),
+                "health_score": eng.health_snapshot.get("health_score", 0),
+                "status": "ok",
+            }, ensure_ascii=False)
+        except Exception as e:
+            logger.error(f"Engine reload failed: {e}")
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
     if not action:
         return json.dumps({"error": "action is required"}, ensure_ascii=False)
 
