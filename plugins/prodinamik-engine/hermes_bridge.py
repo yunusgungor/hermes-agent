@@ -13,6 +13,7 @@ Actions:
 from typing import Any, Dict, Optional, List
 import json
 import logging
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -238,8 +239,11 @@ def handle_transition(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": "slug and target_state are required"}
     engine = _get_engine()
     try:
+        # Capture old state before transition
+        old_run = engine.get_run(slug)
+        old_state = old_run.meta.state if old_run else "unknown"
         run = engine._do_transition(slug, target_state)
-        return {"slug": slug, "state": run.meta.state, "from_state": run.meta.state, "transition": target_state}
+        return {"slug": slug, "state": run.meta.state, "from_state": old_state, "transition": target_state}
     except ValueError as e:
         return {"error": str(e)}
 
@@ -652,12 +656,13 @@ def handle_all(args: Dict[str, Any]) -> Dict[str, Any]:
         global _engine
         _engine = None
         try:
+            import sys as _sys
             import importlib
-            for mod_name in list(sys.modules.keys()):
+            for mod_name in list(_sys.modules.keys()):
                 if mod_name.startswith("engine.") and mod_name != "engine":
-                    sys.modules.pop(mod_name, None)
+                    _sys.modules.pop(mod_name, None)
             for key in ["engine.config", "engine.engine", "engine.runtime"]:
-                sys.modules.pop(key, None)
+                _sys.modules.pop(key, None)
             eng = _get_engine()
             return {
                 "message": "Engine reloaded",
