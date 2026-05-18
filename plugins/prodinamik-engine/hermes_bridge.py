@@ -441,22 +441,27 @@ def _with_core(func):
     """Decorator: get ContentOSCore and pass to handler, or return error."""
     def wrapper(args):
         try:
-            plugin_root = Path(__file__).parent.parent / "content-os"
-            if not plugin_root.exists():
-                return {"error": f"content-os plugin not found at {plugin_root}"}
             import sys
             import importlib
-
-            # Add plugins parent to sys.path so content_os package is importable
-            plugins_dir = str(plugin_root.parent)
+            plugins_dir = str(Path(__file__).parent.parent)
             if plugins_dir not in sys.path:
                 sys.path.insert(0, plugins_dir)
 
-            # Import via symlink: content_os -> content-os
-            # This keeps __package__ correct so relative imports (from .buffer) work
-            mod = importlib.import_module("content_os.content_os_core")
-            ContentOSCore = mod.ContentOSCore
+            # Try archive first (clean migration path)
+            try:
+                mod = importlib.import_module("plugins.archive.content_os.content_os_core")
+                ContentOSCore = mod.ContentOSCore
+            except (ImportError, AttributeError):
+                # Fallback: live plugin dir (pre-cleanup compat)
+                try:
+                    mod = importlib.import_module("content_os.content_os_core")
+                    ContentOSCore = mod.ContentOSCore
+                except (ImportError, AttributeError):
+                    return {"error": "ContentOSCore not available (migrated to Prodinamik Engine). Use 'prodinamik' tool directly or check plugins/archive/content-os/"}
 
+            plugin_root = Path(__file__).parent.parent / "content-os"
+            if not plugin_root.exists() or not (plugin_root / "strategy").exists():
+                plugin_root = Path(__file__).parent.parent / "archive" / "content-os"
             core = ContentOSCore(plugin_root)
             return func(core, args)
         except Exception as e:
@@ -485,20 +490,28 @@ def register_haber_actions():
         return
 
     try:
-        plugin_root = Path(__file__).parent.parent / "haber-kurator"
-        if not plugin_root.exists():
-            logger.warning(f"Haber-kurator plugin not found at {plugin_root}")
-            return
-
         import sys
+        import importlib
         import importlib.util
-        plugins_dir = str(plugin_root.parent)
+        plugins_dir = str(Path(__file__).parent.parent)
         if plugins_dir not in sys.path:
             sys.path.insert(0, plugins_dir)
 
-        # Import via symlink: haber_os -> haber-kurator
-        mod = importlib.import_module("haber_os.haber_kurator_core")
-        HaberKuratorCore = mod.HaberKuratorCore
+        # Try archive first (clean migration path), fallback to live dir
+        try:
+            mod = importlib.import_module("plugins.archive.haber_kurator.haber_kurator_core")
+            HaberKuratorCore = mod.HaberKuratorCore
+        except (ImportError, AttributeError):
+            try:
+                mod = importlib.import_module("haber_os.haber_kurator_core")
+                HaberKuratorCore = mod.HaberKuratorCore
+            except (ImportError, AttributeError):
+                logger.warning("HaberKuratorCore not available (migrated to Prodinamik Engine)")
+                return
+
+        plugin_root = plugin_root = Path(__file__).parent.parent / "haber-kurator"
+        if not plugin_root.exists() or not (plugin_root / "strategy").exists():
+            plugin_root = Path(__file__).parent.parent / "archive" / "haber-kurator"
 
         def _wrap_haber(fn):
             def wrapper(args):

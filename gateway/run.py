@@ -6519,17 +6519,38 @@ class GatewayRunner:
         # Plugin-registered slash commands
         if command:
             try:
-                from hermes_cli.plugins import get_plugin_command_handler
+                from hermes_cli.plugins import get_plugin_command_handler, PluginManager
                 # Normalize underscores to hyphens so Telegram's underscored
                 # autocomplete form matches plugin commands registered with
                 # hyphens. See hermes_cli/commands.py:_build_telegram_menu.
                 plugin_handler = get_plugin_command_handler(command.replace("_", "-"))
                 if plugin_handler:
                     user_args = event.get_command_args().strip()
-                    result = plugin_handler(user_args)
-                    if asyncio.iscoroutine(result):
-                        result = await result
-                    return str(result) if result else None
+
+                    # Set up a reply function so the plugin handler can send
+                    # interim progress messages to the current conversation.
+                    _reply_fn = None
+                    try:
+                        _adapter = self.adapters.get(source.platform)
+                        if _adapter:
+                            _meta = self._thread_metadata_for_source(source)
+                            async def _send_reply(text: str):
+                                try:
+                                    await _adapter.send(source.chat_id, text, metadata=_meta)
+                                except Exception:
+                                    pass
+                            _reply_fn = lambda text: asyncio.ensure_future(_send_reply(text))
+                    except Exception:
+                        pass
+
+                    _reply_token = PluginManager.set_reply_fn(_reply_fn)
+                    try:
+                        result = plugin_handler(user_args)
+                        if asyncio.iscoroutine(result):
+                            result = await result
+                        return str(result) if result else None
+                    finally:
+                        PluginManager.reset_reply_fn(_reply_token)
             except Exception as e:
                 logger.debug("Plugin command dispatch failed (non-fatal): %s", e)
 

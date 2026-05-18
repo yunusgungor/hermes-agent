@@ -34,6 +34,7 @@ so plugin-defined tools appear alongside the built-in tools.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import importlib
 import importlib.metadata
 import importlib.util
@@ -371,6 +372,33 @@ class PluginContext:
             cli._pending_input.put(msg)
         return True
 
+    # -- interim reply during command handling ---------------------------------
+
+    def reply(self, text: str) -> None:
+        """Send an interim reply back to the current conversation.
+
+        Available **only** during slash command handler execution on gateway
+        platforms (Telegram, Discord, Slack, etc.). The message is sent to
+        the same chat/thread that invoked the command.
+
+        Takes effect immediately. Use this to send progress updates during
+        long-running operations (e.g. fetching news, verifying sources).
+
+        In CLI mode (no gateway), this is a no-op with a debug log.
+        """
+        fn = PluginManager.get_reply_fn()
+        if fn:
+            try:
+                fn(text)
+            except Exception as exc:
+                logger.debug("PluginContext.reply() callback failed: %s", exc)
+        else:
+            logger.debug(
+                "PluginContext.reply('%s...'): no reply function set "
+                "(not running through gateway dispatch or already returned)",
+                text[:60],
+            )
+
     # -- CLI command registration --------------------------------------------
 
     def register_cli_command(
@@ -684,6 +712,35 @@ class PluginManager:
         self._cli_ref = None  # Set by CLI after plugin discovery
         # Plugin skill registry: qualified name → metadata dict.
         self._plugin_skills: Dict[str, Dict[str, Any]] = {}
+
+    # -----------------------------------------------------------------------
+    # Reply mechanism for plugin command handlers to send interim progress
+    # messages to the current conversation. Uses a ContextVar for thread
+    # safety — each asyncio task or thread gets its own value.
+    # -----------------------------------------------------------------------
+    _current_reply_fn: contextvars.ContextVar[Optional[Callable[[str], None]]] = (
+        contextvars.ContextVar('_plugin_reply_fn', default=None)
+    )
+
+    @staticmethod
+    def set_reply_fn(fn: Optional[Callable[[str], None]]) -> contextvars.Token:
+        """Set the reply function for the current execution context.
+
+        The function will be called by PluginContext.reply() to send
+        interim messages back to the conversation that invoked the
+        plugin command handler.
+        """
+        return PluginManager._current_reply_fn.set(fn)
+
+    @staticmethod
+    def reset_reply_fn(token: contextvars.Token) -> None:
+        """Restore the previous reply function using the token."""
+        PluginManager._current_reply_fn.reset(token)
+
+    @staticmethod
+    def get_reply_fn() -> Optional[Callable[[str], None]]:
+        """Get the current reply function, or None if not set."""
+        return PluginManager._current_reply_fn.get()
 
     # -----------------------------------------------------------------------
     # Public

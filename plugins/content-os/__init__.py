@@ -6,7 +6,7 @@ to the Prodinamik Engine plugin (prodinamik tool).
 
 Original source code archived at: plugins/archive/content-os/
 
-Migration date: 2026-05-19
+Migration date: 2026-05-19 (final)
 """
 
 from pathlib import Path

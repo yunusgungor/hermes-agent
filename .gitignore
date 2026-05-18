@@ -48,6 +48,12 @@ cli-config.yaml
 
 # Skills Hub state (lives in ~/.hermes/skills/.hub/ at runtime, but just in case)
 skills/.hub/
+
+# Build artifacts
+/build/
+
+# Prodinamik Engine run data
+plugins/prodinamik-engine/.hermes/
 ignored/
 .worktrees/
 environments/benchmarks/evals/
