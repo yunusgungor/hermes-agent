@@ -10,5 +10,12 @@
     "profile": "software",
     "status": "active",
     "updated_at": "2026-05-18T22:56:28.160711"
+  },
+  "test-ai-developments-this-week": {
+    "state": "drafting",
+    "profile": "content",
+    "status": "active",
+    "updated_at": "2026-05-19T00:06:42.881825",
+    "version": 3
   }
 }
