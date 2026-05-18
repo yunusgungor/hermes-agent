@@ -1,35 +1,41 @@
 # Workboard — İçerik Üretim Sırası
 
 > Bu dosya, yapılacak içerik objelerini öncelik sırasına göre listeler.
-> Her satır: öncelik, slug, state, not.
 > Güncellenir: her yeni içerik eklendiğinde veya öncelik değiştiğinde.
 
 ---
 
 ## Öncelik Sırası
 
-| # | Slug | State | Pilar | Not |
-|---|------|-------|-------|-----|
-| 1 | 2026-05-knowgraph-projesi-graph-rag-mcp-server-for-code | drafting | Pillar 4 (Open Source AI) | Draft hazır, verification bekliyor |
-| 2 | 2026-05-openlane-drc-fix | brief_ready | Pillar 2 (OpenLane/SKY130) | Brief yazılacak |
-| 3 | 2026-05-riscv-timing-violation | idea_review | Pillar 1 (RISC-V ASIC) | Idea Gate kararı verildi |
+| # | Slug | State | Pillar | Not |
+|---|------|-------|--------|-----|
+| 1 | *(günlük tech news)* | captured | **Pillar 6 — Günlük Tech News** | Cron job ile otomatik oluşturulacak |
+| 2 | *(haftalık AI savaşları)* | captured | **Pillar 1 — AI Systems Architecture** | Her Pazartesi planlanır |
+| 3 | *(haftalık OSS raporu)* | captured | **Pillar 6 — Günlük Tech News** | Her Cuma planlanır |
 
 ---
 
 ## Yapılacaklar
 
-- [ ] **2026-05-knowgraph-projesi** — drafting → verification → draft_review → approved
-- [ ] **2026-05-openlane-drc-fix** — brief_ready → drafting → verification
-- [ ] **2026-05-riscv-timing-violation** — idea_review → brief_ready
-- [ ] Yeni içerik fikri ekle (inbox'tan ideas/'a taşı)
+- [ ] **Günlük cron job kurulumu** — sabah 08:00'de tech news çek + tweet thread hazırla
+- [ ] **Haftalık AI özeti** — Pazartesi 09:00 cron
+- [ ] **İlk manuel test** — elle bir run başlat, pipeline'ı test et
 
 ---
 
 ## Açıklama
 
-- **idea_review:** Fikir onaylandı, route kararı verildi. Brief yazılacak.
-- **brief_ready:** Writer Context Packet hazır. Draft oluşturulmayı bekliyor.
-- **drafting:** Draft oluşturuldu. Verification bekliyor.
-- **approved:** İçerik hazır, yayınlama sırası bekleniyor.
-- **published:** Yayınlandı.
-- **learned:** Feedback döngüsü tamamlandı.
+Artık havuza iki tür içerik giriyor:
+
+**Orijinal içerikler** (Pillar 1-5):
+- AI Systems, Multi-Agent, Production Infra, Cognitive Eng, AI-Native Product
+- İnsan tarafından başlatılır, uzun format
+
+**Haber içerikleri** (Pillar 6):
+- Günlük teknoloji haber tweet thread'leri
+- Cron job tarafından otomatik başlatılır
+- Bükülük sıralı, kısa format (8-10 tweet)
+
+---
+
+*Son güncelleme: 2026-05-16 — Pillar 6 eklendi, news workflow yapılandırıldı.*

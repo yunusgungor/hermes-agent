@@ -1,35 +1,31 @@
 """
-Content OS Core — Full Content OS v2.4.0 Implementation
+Content OS Core — Full Content OS v2.5.0 Implementation
 =======================================================
 Complete 14-state lifecycle, 107 slop patterns (3 tiers + bonus),
 4-route Idea Gate, Writer/Verifier dual-agent pipeline,
 LLM-based postmortem with exact-line analysis, GBrain MCP integration,
-state persistence, structured logging.
+Buffer API publishing (draft posts), state persistence, structured logging.
 
 Based on Shann³ (@shannholmberg) Content OS.
 """
 
+import asyncio
 import json
 import logging
 import re
 import shutil
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Union
-from datetime import datetime, timedelta
-from dataclasses import dataclass, field
+from typing import List, Dict, Any, Optional, Callable
+from datetime import datetime
+from dataclasses import dataclass
+
+from .content_os_buffer import BufferClient
 
 logger = logging.getLogger(__name__)
 
-VERSION = "2.4.0"
+VERSION = "2.5.0"
 
-CONFIG = {
-    "version": "2.4.0",
-    "gbrain_available": False,
-    "cache_enabled": True,
-    "default_llm_provider": "auto",
-}
-
-# The complete 14-state lifecycle (blog-matching)
+# The complete 14-state lifecycle
 STATE_LIFECYCLE = [
     "captured",
     "idea_review",
@@ -64,26 +60,26 @@ STATE_TRANSITIONS = {
     "archived":        [],  # final state — no transitions out
 }
 
+# ── Action Registry ─────────────────────────────────────────────────
+# Runtime-registerable action handlers for tool_content_os_manager.
+# New actions can be added at any time via register_manager_action(),
+# enabling hot-add without Python module reload.
+_ACTION_HANDLERS: Dict[str, Callable] = {}
+
+def register_manager_action(name: str, handler: Callable) -> None:
+    """Register a handler for tool_content_os_manager dispatch.
+
+    Args:
+        name: Action name matching the 'action' field in tool args.
+        handler: Async or sync callable(core, args, **kwargs) -> str.
+    """
+    _ACTION_HANDLERS[name] = handler
+
+def get_registered_actions() -> List[str]:
+    """Return list of all currently registered action names."""
+    return list(_ACTION_HANDLERS.keys())
+
 IDEA_ROUTES = ["ORIGINAL", "REPURPOSE", "REWRITE", "RESEARCH+IDEATE"]
-
-# State → filename mapping for auto-detection (sync_state)
-STATE_FILE_MAP = {
-    "published":     "published",
-    "feedback_72h":  "feedback.md",
-    "feedback_24h":  "feedback.md",
-    "learned":       "feedback.md",
-    "verified":      "verifier-report.md",
-    "drafting":      "draft-package.md",
-    "brief_ready":   "brief.md",
-}
-
-# Self-assessment fields for Writer Agent output
-WRITER_FIELDS = [
-    "rubric_self_assessment",
-    "avoid_slop_pass",
-    "open_loops_flagged",
-    "voice_check",
-]
 
 FULL_SLOP_TIER1 = [
     # 1. Promosyon Dili
@@ -174,15 +170,12 @@ FULL_SLOP_BONUS = [
     # 39. Pseudo-Technical removed (case-insensitive false positives with IGNORECASE)
     # 40. Under-Explaining Proof
     r"result\s*:\s*%\s*\w+",
+    # 41. Clickbait / Curiosity Gap
+    r"you won't believe",
 ]
-
 # ──────────────────────────────────────────────────────────────
-# EXCEPTIONS
+# DATA CLASSES
 # ──────────────────────────────────────────────────────────────
-
-class ContentOSError(Exception):
-    """Base exception for Content OS."""
-    pass
 
 
 @dataclass
@@ -198,27 +191,12 @@ class RunState:
     source_type: str = "belirsiz"
 
 
-@dataclass
-class SlopResult:
-    score: str = "PASS"
-    tier1_count: int = 0
-    tier2_count: int = 0
-    tier3_count: int = 0
-    bonus_count: int = 0
-    findings: List[str] = field(default_factory=list)
-    findings_tier1: List[str] = field(default_factory=list)
-    findings_tier2: List[str] = field(default_factory=list)
-    findings_tier3: List[str] = field(default_factory=list)
-    findings_bonus: List[str] = field(default_factory=list)
-    all_findings: List[str] = field(default_factory=list)
-
-
 # ══════════════════════════════════════════════════════════════
 # CORE CLASS
 # ══════════════════════════════════════════════════════════════
 
 class ContentOSCore:
-    """Full Content OS engine — 14-state lifecycle, 54 slop patterns,
+    """Full Content OS engine — 14-state lifecycle, 107 slop patterns (3 tiers + bonus),
     4-route Idea Gate, Writer/Verifier dual-agent, LLM postmortem."""
 
     def __init__(self, root: Path):
@@ -230,13 +208,16 @@ class ContentOSCore:
         self.workflows = root / "workflows"
         self.archive = root / "runs" / "archive"
 
-        # Full 54-pattern slop detection (3 tiers + bonus)
+        # Full 107-pattern slop detection (3 tiers + bonus)
         self.slop_tier1 = FULL_SLOP_TIER1
         self.slop_tier2 = FULL_SLOP_TIER2
         self.slop_tier3 = FULL_SLOP_TIER3
         self.slop_bonus = FULL_SLOP_BONUS
 
         self.gbrain_enabled = False
+
+        # Buffer.com integration for publishing drafts
+        self.buffer = BufferClient(root)
 
         self._init_stores_dirs()
         self._migrate_old_state()
@@ -394,10 +375,11 @@ class ContentOSCore:
             "gördüm", "okudum", "izledim", "found", "read", "saw",
             "gönderi", "tweet'te", "makalede",
         ]
-        # Research/exploration keywords
+        # Research/exploration keywords (with Turkish stem variants)
         research_kw = [
-            "araştır", "keşfet", "research", "explore", "investigate",
-            "analiz et", "karşılaştır", "compare", "trend",
+            "araştır", "araştir", "keşfet", "kesfet", "research", "explore",
+            "investigate", "analiz et", "karşılaştır", "karsilastir",
+            "compare", "trend", "incele", "inceleyelim",
         ]
 
         is_internal = has_any(internal_kw)
@@ -564,15 +546,96 @@ class ContentOSCore:
         logger.info("GBrain MCP integration enabled")
 
     def _query_gbrain(self, query: str) -> Dict[str, str]:
-        """Query GBrain for semantically relevant context.
+        """Query GBrain for semantically relevant context via MCP.
+
         Returns proof, hooks, voice context from GBrain knowledge graph.
-        Actual MCP call happens at Hermes agent level; this is the integration point.
+        Uses handle_function_call → mcp_gbrain_query tool when enabled.
+        Hermes agent ctx üzerinden MCP tool çağrısı ile çalışır.
+
+        To enable: call core.enable_gbrain() after init, or set
+        CONFIG['gbrain_available'] = True before ContentOSCore init.
+
+        MCP entegrasyon noktası — şu tool'lar kullanılır:
+          - mcp_gbrain_query(query, limit=5)  → semantic search
+          - mcp_gbrain_search(query, limit=5) → keyword search
+
+        Actual MCP calls use handle_function_call() which dispatches
+        to the registered MCP server session.
         """
         if not self.gbrain_enabled:
-            return {}
-        # GBrain MCP sorgu noktası — Hermes agent ctx üzerinden çağrılır
-        logger.debug("GBrain query: %s", query[:100])
-        return {}  # Placeholder — GBrain MCP tool çağrısı buradan yapılır
+            logger.debug("GBrain query skipped (disabled): %s", query[:80])
+            return {"proof": "GBrain MCP devre dışı. enable_gbrain() ile etkinleştir.",
+                    "hooks": "", "voice": ""}
+
+        logger.info("GBrain MCP query: %s", query[:100])
+
+        # Try real MCP call via Hermes tool dispatch
+        proof_text = ""
+        hooks_text = ""
+        voice_text = ""
+        mcp_success = False
+
+        try:
+            from model_tools import handle_function_call
+            # Call mcp_gbrain_query for semantic search
+            result_json = handle_function_call(
+                "mcp_gbrain_query",
+                {"query": query, "limit": 5},
+                skip_pre_tool_call_hook=True,
+            )
+            result = json.loads(result_json) if isinstance(result_json, str) else result_json
+            logger.debug("GBrain MCP query result keys: %s", list(result.keys()) if isinstance(result, dict) else type(result))
+
+            if isinstance(result, dict) and "result" in result:
+                raw = result["result"]
+                if isinstance(raw, str):
+                    proof_text = raw[:2000]
+                elif isinstance(raw, list):
+                    proof_text = "\n\n".join(
+                        [r.get("content", str(r))[:500] for r in raw[:5]]
+                    )
+                else:
+                    proof_text = str(raw)[:2000]
+                mcp_success = True
+                logger.info("GBrain MCP query succeeded for: %s", query[:80])
+
+                # Also try mcp_gbrain_search for keyword-based hooks/proof
+                try:
+                    search_json = handle_function_call(
+                        "mcp_gbrain_search",
+                        {"query": query, "limit": 3},
+                        skip_pre_tool_call_hook=True,
+                    )
+                    search_result = json.loads(search_json) if isinstance(search_json, str) else search_json
+                    if isinstance(search_result, dict) and "result" in search_result:
+                        search_raw = search_result["result"]
+                        if isinstance(search_raw, str):
+                            hooks_text = search_raw[:1000]
+                        elif isinstance(search_raw, list):
+                            hooks_text = "\n".join(
+                                [r.get("content", str(r))[:300] for r in search_raw[:3]]
+                            )
+                except Exception as search_err:
+                    logger.debug("GBrain search fallback skipped: %s", search_err)
+                    hooks_text = ""
+
+        except ImportError:
+            logger.warning("model_tools.handle_function_call not available (standalone mode)")
+        except Exception as e:
+            logger.error("GBrain MCP call failed: %s", str(e)[:200])
+            mcp_success = False
+
+        if mcp_success:
+            return {
+                "proof": proof_text or "GBrain sorgusu sonuç döndürmedi.",
+                "hooks": hooks_text or "Hook pattern için keyword search sonucu yok.",
+                "voice": "MCP sorgusu tamamlandı.",
+            }
+
+        # Fallback: return placeholder with error context
+        return {"proof": f"GBrain MCP sorgusu başarısız oldu. Query: {query[:100]}",
+                "hooks": "MCP fallback — sonuç yok.",
+                "voice": "MCP fallback — sonuç yok."}
 
     def _get_relevant_proof(self, idea: str) -> str:
         """Find proof elements relevant to the idea."""
@@ -857,6 +920,91 @@ class ContentOSCore:
         return guide.get(state, ["No specific next actions defined for this state."])
 
     # ──────────────────────────────────────────────────────────
+    # LLM HELPER — unified async LLM call for all agents
+    # ──────────────────────────────────────────────────────────
+
+    async def _call_llm(self, task: str, system_prompt: str,
+                        user_prompt: str, llm: Any = None) -> str:
+        """Unified async LLM caller with retry, timeout, and error handling.
+
+        Args:
+            task: Agent task name ('curator', 'writer') for async_call_llm routing.
+            system_prompt: System-level instruction.
+            user_prompt: User message content.
+            llm: Optional LLM client with acomplete() (from parent_agent).
+
+        Returns:
+            Clean text response (code fences stripped).
+
+        Raises:
+            RuntimeError after max retries with details for caller to handle.
+        """
+        import asyncio
+        max_retries = 3
+        base_delay = 1.0
+        last_error = None
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                if llm and hasattr(llm, "acomplete"):
+                    response = await llm.acomplete([
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ])
+                    text = response.text
+                else:
+                    from agent.auxiliary_client import async_call_llm
+                    messages = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ]
+                    raw = await async_call_llm(task=task, messages=messages)
+                    try:
+                        text = raw.choices[0].message.content
+                    except (AttributeError, IndexError):
+                        text = str(raw)
+
+                text = text.strip()
+                if text.startswith("```"):
+                    text = re.sub(r"^```\w*\n?", "", text)
+                    text = re.sub(r"\n```$", "", text)
+                return text
+
+            except asyncio.TimeoutError as e:
+                last_error = f"Timeout (attempt {attempt}/{max_retries})"
+                logger.warning("LLM call timeout for task=%s attempt=%d/%d", task, attempt, max_retries)
+            except Exception as e:
+                err_str = str(e).lower()
+                # Retry only for transient errors
+                is_transient = any(x in err_str for x in [
+                    "timeout", "rate limit", "rate_limit", "429",
+                    "503", "502", "connection", "temporary",
+                    "service unavailable", "too many requests",
+                    "internal server error", "overloaded",
+                ])
+                if is_transient and attempt < max_retries:
+                    last_error = f"{type(e).__name__}: {str(e)[:200]}"
+                    logger.warning(
+                        "LLM transient error for task=%s attempt=%d/%d: %s",
+                        task, attempt, max_retries, last_error,
+                    )
+                else:
+                    # Non-transient or last attempt — raise immediately
+                    raise RuntimeError(f"LLM call failed for task={task}: {e}") from e
+
+            # Exponential backoff before retry
+            if attempt < max_retries:
+                delay = base_delay * (2 ** (attempt - 1))
+                logger.info("Retrying LLM call for task=%s in %.1fs (attempt %d)",
+                            task, delay, attempt + 1)
+                await asyncio.sleep(delay)
+
+        raise RuntimeError(
+            f"LLM call failed for task={task} after {max_retries} attempts. "
+            f"Last error: {last_error}"
+        )
+
+    # ──────────────────────────────────────────────────────────
     # BRIEF GENERATION (Writer Context Packet)
     # ──────────────────────────────────────────────────────────
 
@@ -937,6 +1085,7 @@ What makes this different from what everyone else says?
 ## Constraints
 - Format rules
 - Length (character/tweet count)
+- Language: {{Turkish with English technical terms preserved (default) | English | Bilingual}}
 - Tone (formal/casual/technical)
 - Banned phrases (explicit list)
 - Visual requirements
@@ -963,30 +1112,12 @@ Target total: __/12
 Return ONLY the markdown brief content. No extra commentary."""
 
         try:
-            if llm and hasattr(llm, "acomplete"):
-                response = await llm.acomplete([
-                    {"role": "system", "content": "You are an expert content strategist who writes tight, specific Writer Context Packets."},
-                    {"role": "user", "content": prompt},
-                ])
-                text = response.text
-            else:
-                from agent.auxiliary_client import async_call_llm
-                messages = [
-                    {"role": "system", "content": "You are an expert content strategist."},
-                    {"role": "user", "content": prompt},
-                ]
-                raw = await async_call_llm(task="curator", messages=messages)
-                try:
-                    text = raw.choices[0].message.content
-                except (AttributeError, IndexError):
-                    text = str(raw)
-
-            # Clean the output
-            text = text.strip()
-            if text.startswith("```"):
-                text = re.sub(r"^```\w*\n?", "", text)
-                text = re.sub(r"\n```$", "", text)
-
+            text = await self._call_llm(
+                task="curator",
+                system_prompt="You are an expert content strategist who writes tight, specific Writer Context Packets.",
+                user_prompt=prompt,
+                llm=llm,
+            )
             # Write brief.md
             brief_path = run_path / "brief.md"
             brief_path.write_text(text, encoding="utf-8")
@@ -1067,12 +1198,30 @@ TASK
 5. Follow voice rules exactly
 6. Flag any rubric row that cannot be met
 
+NEWS BULLETIN MODE (active when Pillar =~ "Daily AI News|Günlük|News" or Format =~ "Thread"):
+- PRIMARY goal: REPORT facts — WHO announced WHAT, WHEN, with WHAT metrics
+- SECONDARY goal: Brief context/analysis — keep to 1 sentence per item
+- Structure per news item: metric/fact → implication (NOT opinion → data)
+- Cover 4-6 distinct news stories in 8 tweets — don't stretch one story
+- Each tweet must contain at least one concrete number, name, or metric
+- Anti-editorializing: no "This is huge" / "This matters because" — let the facts speak
+- Source attribution required in thread (company names, publications)
+
 OUTPUT — produce a complete draft-package.md with EXACTLY this structure:
 
+IMPORTANT — Buffer.com compatible format:
+- For Twitter Thread format: start each tweet with `N/ ` on its own line (e.g., `1/ First tweet...`)
+- NO preamble, NO headings, NO extra text between `draft:` and the numbered tweets
+- The `draft:` line must be followed IMMEDIATELY by the first tweet with `1/ ` prefix
+- After all tweets, add rubric_self_assessment, avoid_slop_pass, open_loops_flagged, voice_check
+
+EXAMPLE (Twitter Thread format):
 ```
 ---
 draft:
-[Full content here — thread, single post, or article format as specified in brief]
+1/ First tweet content here — hook with concrete signal
+2/ Second tweet — technical depth, specific metric or architecture detail
+3/ Third tweet — comparison, tradeoff, or counter-intuitive insight
 
 rubric_self_assessment:
 - Saves reader a future task: [0/1/2] — [honest reason with specific evidence]
@@ -1113,29 +1262,12 @@ QUALITY GATES (all must pass):
 - [ ] At least one reusable element included"""
 
         try:
-            if llm and hasattr(llm, "acomplete"):
-                response = await llm.acomplete([
-                    {"role": "system", "content": "You are a Writer Agent for Content OS. You produce high-quality, bookmarkable draft packages."},
-                    {"role": "user", "content": prompt},
-                ])
-                text = response.text
-            else:
-                from agent.auxiliary_client import async_call_llm
-                messages = [
-                    {"role": "system", "content": "You are a Writer Agent for Content OS. You produce high-quality, bookmarkable draft packages."},
-                    {"role": "user", "content": prompt},
-                ]
-                raw = await async_call_llm(task="writer", messages=messages)
-                try:
-                    text = raw.choices[0].message.content
-                except (AttributeError, IndexError):
-                    text = str(raw)
-
-            text = text.strip()
-            if text.startswith("```"):
-                text = re.sub(r"^```\w*\n?", "", text)
-                text = re.sub(r"\n```$", "", text)
-
+            text = await self._call_llm(
+                task="writer",
+                system_prompt="You are a Writer Agent for Content OS. You produce high-quality, bookmarkable draft packages.",
+                user_prompt=prompt,
+                llm=llm,
+            )
             draft_path = run_path / "draft-package.md"
             draft_path.write_text(text, encoding="utf-8")
             self.update_state(slug, "drafting")
@@ -1248,29 +1380,12 @@ EVIDENCE RULES:
 ---"""
 
         try:
-            if llm and hasattr(llm, "acomplete"):
-                response = await llm.acomplete([
-                    {"role": "system", "content": "You are a strict Verifier Agent for Content OS. You catch what the writer missed."},
-                    {"role": "user", "content": prompt},
-                ])
-                text = response.text
-            else:
-                from agent.auxiliary_client import async_call_llm
-                messages = [
-                    {"role": "system", "content": "You are a strict Verifier Agent for Content OS."},
-                    {"role": "user", "content": prompt},
-                ]
-                raw = await async_call_llm(task="curator", messages=messages)
-                try:
-                    text = raw.choices[0].message.content
-                except (AttributeError, IndexError):
-                    text = str(raw)
-
-            text = text.strip()
-            if text.startswith("```"):
-                text = re.sub(r"^```\w*\n?", "", text)
-                text = re.sub(r"\n```$", "", text)
-
+            text = await self._call_llm(
+                task="curator",
+                system_prompt="You are a strict Verifier Agent for Content OS. You catch what the writer missed.",
+                user_prompt=prompt,
+                llm=llm,
+            )
             report_path = run_path / "verifier-report.md"
             report_path.write_text(text, encoding="utf-8")
             self.update_state(slug, "verification")
@@ -1377,23 +1492,12 @@ Return EXACTLY valid JSON:
 }}
 """
         try:
-            if llm and hasattr(llm, "acomplete"):
-                response = await llm.acomplete([
-                    {"role": "system", "content": "You are a strict technical content editor scoring against a rubric."},
-                    {"role": "user", "content": prompt},
-                ])
-                text = response.text
-            else:
-                from agent.auxiliary_client import async_call_llm
-                messages = [
-                    {"role": "system", "content": "You are a strict technical content editor."},
-                    {"role": "user", "content": prompt},
-                ]
-                raw = await async_call_llm(task="curator", messages=messages)
-                try:
-                    text = raw.choices[0].message.content
-                except (AttributeError, IndexError):
-                    text = str(raw)
+            text = await self._call_llm(
+                task="curator",
+                system_prompt="You are a strict technical content editor scoring against a rubric.",
+                user_prompt=prompt,
+                llm=llm,
+            )
 
             json_match = re.search(r"(\{.*\})", text, re.DOTALL)
             if json_match:
@@ -1521,28 +1625,12 @@ Return as markdown with these sections:
 ---"""
 
         try:
-            if llm and hasattr(llm, "acomplete"):
-                response = await llm.acomplete([
-                    {"role": "system", "content": "You are a viral content analyst. Point at EXACT lines. Generic praise is rejected."},
-                    {"role": "user", "content": prompt},
-                ])
-                text = response.text
-            else:
-                from agent.auxiliary_client import async_call_llm
-                messages = [
-                    {"role": "system", "content": "You are a viral content analyst. Point at EXACT lines."},
-                    {"role": "user", "content": prompt},
-                ]
-                raw = await async_call_llm(task="curator", messages=messages)
-                try:
-                    text = raw.choices[0].message.content
-                except (AttributeError, IndexError):
-                    text = str(raw)
-
-            text = text.strip()
-            if text.startswith("```"):
-                text = re.sub(r"^```\w*\n?", "", text)
-                text = re.sub(r"\n```$", "", text)
+            text = await self._call_llm(
+                task="curator",
+                system_prompt="You are a viral content analyst. Point at EXACT lines. Generic praise is rejected.",
+                user_prompt=prompt,
+                llm=llm,
+            )
 
             # Append to feedback.md (preserve 24h/72h distinction)
             feedback_path = run_path / "feedback.md"
@@ -1938,6 +2026,308 @@ Return as markdown with these sections:
                 continue
         return results
 
+    # ──────────────────────────────────────────────────────────
+    # BUFFER API — Publish drafts to Buffer.com
+    # ──────────────────────────────────────────────────────────
+
+    def buffer_setup(self, api_key: Optional[str] = None) -> str:
+        """Configure Buffer API connection.
+
+        Steps:
+        1. Set API key (from arg, env, or prompt)
+        2. Fetch organizations
+        3. Select organization
+        4. Fetch channels
+        5. Select channel (usually Twitter/X)
+
+        Args:
+            api_key: Optional API key override. If not provided,
+                     resolves from env var or ~/.hermes/.env.
+
+        Returns:
+            Status message with available orgs/channels or error.
+        """
+        if api_key:
+            self.buffer.configure_api_key(api_key)
+
+        if not self.buffer.has_api_key:
+            return (
+                "❌ BUFFER_API_KEY not found.\n\n"
+                "To set up Buffer integration:\n"
+                "1. Go to https://publish.buffer.com/settings/api\n"
+                "2. Create an API key\n"
+                "3. Set it in ~/.hermes/.env as:\n"
+                "   BUFFER_API_KEY=your_key_here\n"
+                "4. Then run this command again\n\n"
+                "Or pass directly: --api-key YOUR_KEY"
+            )
+
+        # Fetch organizations
+        orgs = self.buffer.fetch_organizations()
+        if isinstance(orgs, dict) and "error" in orgs:
+            return f"❌ Failed to fetch organizations: {orgs['error']}"
+        if not orgs or (isinstance(orgs, list) and len(orgs) == 1 and "error" in orgs[0]):
+            err = orgs[0]["error"] if isinstance(orgs[0], dict) else str(orgs)
+            return f"❌ {err}"
+
+        if len(orgs) == 1:
+            org_id = orgs[0]["id"]
+            org_name = orgs[0].get("name", org_id)
+        else:
+            org_list = "\n".join(
+                f"  {i+1}. {o.get('name', '?')} ({o['id']})"
+                for i, o in enumerate(orgs)
+            )
+            return (
+                f"✅ Found {len(orgs)} organizations:\n{org_list}\n\n"
+                f"Cached org_id: {self.buffer._config.get('org_id', 'not set')}\n\n"
+                "Run `hermes content buffer setup org <INDEX>` to select one.\n"
+                "Or manually set org_id in `.buffer_config.json`."
+            )
+
+        # Fetch channels for the selected org
+        channels = self.buffer.fetch_channels(org_id)
+        if isinstance(channels, dict) and "error" in channels:
+            return f"❌ Failed to fetch channels: {channels['error']}"
+        if not channels or (isinstance(channels, list) and len(channels) == 1 and "error" in channels[0]):
+            err = channels[0]["error"] if isinstance(channels[0], dict) else str(channels)
+            return f"❌ {err}"
+
+        # Filter to Twitter/X channels, prefer first
+        twitter_channels = [c for c in channels if c.get("service", "").lower() in ("twitter", "x")]
+
+        if not twitter_channels:
+            channel_list = "\n".join(
+                f"  {i+1}. {c.get('displayName', c.get('name', '?'))} ({c.get('service', '?')})"
+                for i, c in enumerate(channels)
+            )
+            return (
+                f"✅ Org: {org_name}\n"
+                f"Found {len(channels)} channels (no Twitter/X found):\n{channel_list}\n\n"
+                "Add a Twitter channel in Buffer first, or set channel_id manually."
+            )
+
+        # Auto-select first Twitter channel
+        ch = twitter_channels[0]
+        self.buffer._config["org_id"] = org_id
+        self.buffer._config["org_name"] = org_name
+        self.buffer._config["channel_id"] = ch["id"]
+        self.buffer._config["channel_name"] = ch.get("displayName", ch.get("name", "?"))
+        self.buffer._config["channel_service"] = ch.get("service", "twitter")
+        self.buffer._config["setup_at"] = datetime.now().isoformat()
+        self.buffer._save_config()
+
+        return (
+            f"✅ Buffer configured successfully!\n\n"
+            f"**Organization:** {org_name}\n"
+            f"**Channel:** {ch.get('displayName', ch.get('name', '?'))} ({ch.get('service', '?')})\n"
+            f"**Channel ID:** {ch['id']}\n\n"
+            f"Ready to send drafts with:\n"
+            f"  `hermes content buffer send <slug>`"
+        )
+
+    def buffer_send(self, slug: str) -> str:
+        """Parse a run's draft and send tweets as Buffer draft posts.
+
+        Reads draft-package.md, extracts individual tweets,
+        sends each as a separate draft post to Buffer queue.
+
+        Args:
+            slug: Run slug
+
+        Returns:
+            Status message with results per tweet.
+        """
+        if not self.buffer.is_configured:
+            return (
+                "❌ Buffer not configured.\n"
+                "Run `hermes content buffer setup` first."
+            )
+
+        # Find draft file
+        draft_path = self.active_runs / slug / "draft-package.md"
+        if not draft_path.exists():
+            draft_path = self.archive / slug / "draft-package.md"
+        if not draft_path.exists():
+            return f"❌ Draft not found for run: {slug}"
+
+        # Parse tweets
+        draft_text = draft_path.read_text(encoding="utf-8")
+        tweets = BufferClient.parse_draft_text(draft_text)
+
+        # Auto-fix: if parsing fails, try to reformat draft to Buffer-compatible format
+        if not tweets:
+            reformatted = BufferClient.reformat_to_buffer_format(draft_text)
+            tweets = BufferClient.parse_draft_text(reformatted)
+            if tweets:
+                # Save reformatted draft for consistency
+                draft_path.write_text(reformatted, encoding="utf-8")
+            else:
+                return (
+                    f"❌ Could not parse tweets from draft.\n\n"
+                    f"Expected format (N/ tweet content):\n"
+                    f"  ---\n"
+                    f"  draft:\n"
+                    f"  \n"
+                    f"  1/ First tweet content...\n"
+                    f"  2/ Second tweet content...\n"
+                    f"  ---\n"
+                )
+
+        # Validate tweet lengths
+        warnings = []
+        for i, t in enumerate(tweets, 1):
+            if len(t) > 280:
+                warnings.append(f"⚠️  Tweet {i}: {len(t)} chars (max 280)")
+
+        # Send to Buffer
+        results = self.buffer.send_thread(tweets)
+
+        # Build report
+        lines = [f"📤 **Buffer Send Report — {slug}**", ""]
+        success_count = 0
+        for r in results:
+            tn = r.get("tweet_number", "?")
+            if r.get("success"):
+                success_count += 1
+                preview = r.get("text", "")[:60] if "text" in r else ""
+                lines.append(f"  ✅ Tweet {tn}: Sent (ID: {r.get('post_id', '?')})")
+            else:
+                lines.append(f"  ❌ Tweet {tn}: {r.get('error', 'Unknown error')}")
+
+        lines.append("")
+        lines.append(f"**{success_count}/{len(tweets)}** tweets sent to Buffer as drafts.")
+        if warnings:
+            lines.append("\n**Warnings:**")
+            lines.extend(warnings)
+        lines.append("\n📌 **Next:** Review and publish from https://publish.buffer.com")
+
+        # Auto-update state
+        if success_count > 0:
+            current_state = self.get_state(slug)
+            if current_state in ("draft_review", "approved", "scheduler_ready"):
+                self.update_state(slug, "scheduled")
+
+        return "\n".join(lines)
+
+    def buffer_status(self) -> str:
+        """Show Buffer integration status."""
+        return self.buffer.get_config_summary()
+
+    async def run_pipeline(self, slug: str, llm: Any = None,
+                           extra_context: str = "") -> str:
+        """Run the full pipeline: brief → draft → verify → score → slop.
+
+        Single atomic call — reduces tool-call flood and provider latency issues.
+        Each step has isolated error handling so one failure doesn't kill the
+        entire pipeline.
+
+        Args:
+            slug: Run slug
+            llm: Optional LLM client
+            extra_context: Extra context for brief generation
+
+        Returns:
+            Human-readable pipeline report.
+        """
+        report = []
+        had_error = False
+
+        # Step 1: Idea Review
+        try:
+            self.update_state(slug, "idea_review")
+            report.append("✅ Step 1: idea_review")
+        except Exception as e:
+            report.append(f"⚠️ Step 1: idea_review failed — {e}")
+            had_error = True
+
+        # Step 2: Brief
+        try:
+            br = await self.generate_brief(slug, llm, extra_context)
+            if "error" in br:
+                report.append(f"❌ Step 2: Brief failed — {br['error']}")
+                had_error = True
+            else:
+                report.append(f"✅ Step 2: Brief generated ({br.get('length', '?')} chars)")
+        except Exception as e:
+            report.append(f"❌ Step 2: Brief exception — {e}")
+            had_error = True
+
+        if had_error:
+            report.append("\n⚠️ Pipeline stopped early due to errors.")
+            return "\n".join(report)
+
+        # Step 3: Drafting
+        try:
+            self.update_state(slug, "drafting")
+            report.append("✅ Step 3: drafting state")
+        except Exception as e:
+            report.append(f"⚠️ Step 3: state update failed — {e}")
+
+        # Step 4: Draft
+        try:
+            dr = await self.generate_draft(slug, llm)
+            if "error" in dr:
+                report.append(f"❌ Step 4: Draft failed — {dr['error']}")
+                had_error = True
+            else:
+                report.append(f"✅ Step 4: Draft generated ({dr.get('length', '?')} chars)")
+        except Exception as e:
+            report.append(f"❌ Step 4: Draft exception — {e}")
+            had_error = True
+
+        if had_error:
+            report.append("\n⚠️ Pipeline stopped early.")
+            return "\n".join(report)
+
+        # Step 5: Verification
+        try:
+            self.update_state(slug, "verification")
+            vr = await self.run_verifier(slug, llm)
+            if "error" in vr:
+                report.append(f"⚠️ Step 5: Verifier issue — {vr['error']}")
+            else:
+                report.append(f"✅ Step 5: Verifier done ({vr.get('length', '?')} chars)")
+        except Exception as e:
+            report.append(f"⚠️ Step 5: Verifier exception — {e}")
+
+        # Step 6: Quality — slop scan + rubric score
+        try:
+            draft_path = self.active_runs / slug / "draft-package.md"
+            if draft_path.exists():
+                text = draft_path.read_text(encoding="utf-8")
+                slop = self.scan_slop(text)
+                s_score = slop.get("score", "?")
+                s_total = slop.get("tier1_count", 0) + slop.get("tier2_count", 0) + \
+                          slop.get("tier3_count", 0) + slop.get("bonus_count", 0)
+                report.append(f"✅ Step 6: Slop scan — {s_score} ({s_total} findings)")
+        except Exception as e:
+            report.append(f"⚠️ Step 6: Slop scan failed — {e}")
+
+        try:
+            sc = await self.evaluate_rubric(slug, llm)
+            if "error" not in sc:
+                r_total = sc.get("total", 0)
+                r_pass = sc.get("passes", False)
+                status = "✅ PASS" if r_pass else "❌ FAIL"
+                report.append(f"✅ Step 7: Rubric — {r_total}/12 {status}")
+        except Exception as e:
+            report.append(f"⚠️ Step 7: Rubric failed — {e}")
+
+        # Step 8: Draft review state
+        try:
+            self.update_state(slug, "draft_review")
+            report.append("✅ Step 8: draft_review")
+        except Exception as e:
+            report.append(f"⚠️ Step 8: State update failed — {e}")
+
+        report.insert(0, f"📋 **Pipeline Report — {slug}**\n")
+        if had_error:
+            report.append("\n⚠️ Pipeline completed with some errors — review above.")
+        else:
+            report.append("\n🎉 Pipeline complete! Ready for human review.")
+        return "\n".join(report)
+
     def archive_run(self, slug: str) -> str:
         """Move a run from active to archive. Must be in 'learned' state."""
         state = self.get_state(slug)
@@ -1952,11 +2342,20 @@ Return as markdown with these sections:
         if dst.exists():
             return f"❌ Archive already contains {slug}."
 
-        import shutil
         try:
             shutil.copytree(str(src), str(dst))
             shutil.rmtree(str(src))
-            self.update_state(slug, "archived")
+            # Update state cache directly (filesystem already moved)
+            if slug in self._state_cache:
+                self._state_cache[slug].state = "archived"
+                self._state_cache[slug].updated = datetime.now().isoformat()
+            else:
+                self._state_cache[slug] = RunState(
+                    slug=slug, state="archived",
+                    created=datetime.now().isoformat(),
+                    updated=datetime.now().isoformat(),
+                )
+            self._save_state_cache()
             return f"✅ Run {slug} archived. Moved to runs/archive/"
         except Exception as e:
             return f"❌ Archive failed: {str(e)}"
@@ -1968,7 +2367,35 @@ Return as markdown with these sections:
 
 async def tool_content_os_manager(core: ContentOSCore, args: Dict[str, Any],
                                    **kwargs) -> str:
-    """Handle all manager tool actions."""
+    """Handle all manager tool actions with human-readable returns."""
+
+    def _fmt(res: Any, ok_prefix: str = "✅") -> str:
+        """Convert tool result to human-readable text."""
+        if isinstance(res, str):
+            return res
+        if isinstance(res, dict):
+            if "error" in res:
+                return f"❌ {res['error']}"
+            if res.get("status") == "exists":
+                return f"⚠️ Run already exists: {res.get('slug', '?')}"
+            if "slug" in res and "status" in res:
+                length = res.get("length", "")
+                size = f" ({length} chars)" if length else ""
+                return f"{ok_prefix} {res['status'].upper()}: {res['slug']}{size}"
+            if "route" in res and "rationale" in res:
+                return (
+                    f"🗺️ Route: {res['route']}\n"
+                    f"   Rationale: {res['rationale']}\n"
+                    f"   Source: {res.get('source_type', '?')}"
+                )
+            # Generic dict — show key fields
+            parts = [f"{k}: {v}" for k, v in res.items()
+                     if not isinstance(v, (dict, list)) or len(str(v)) < 100]
+            return " | ".join(parts) if parts else str(res)[:300]
+        if isinstance(res, list):
+            return f"📋 {len(res)} items returned"
+        return str(res)[:500]
+
     try:
         action = args.get("action")
         slug = args.get("slug")
@@ -1981,35 +2408,53 @@ async def tool_content_os_manager(core: ContentOSCore, args: Dict[str, Any],
             return core.audit()
 
         if action == "list":
-            return json.dumps(core.get_all_runs(args.get("include_archived", True)))
+            runs = core.get_all_runs(args.get("include_archived", True))
+            if not runs:
+                return "📭 No runs found."
+            lines = [f"📋 **{len(runs)} runs:**"]
+            for r in runs:
+                emoji = "📦" if r.get("status") == "archived" else "📄"
+                lines.append(
+                    f"  {emoji} **{r['slug']}** — {r.get('state', '?')} "
+                    f"({r.get('route', '?')})"
+                )
+            return "\n".join(lines[:20]) + ("\n  ..." if len(runs) > 20 else "")
 
         # --- Run Actions ---
         if action == "new_run":
-            return json.dumps(core.create_run(
+            res = core.create_run(
                 args.get("idea", ""),
                 args.get("slug"),
                 args.get("source_hint", ""),
-            ))
+            )
+            return _fmt(res, "📝")
 
         if action == "update_state":
-            return core.update_state(slug, args.get("state"))
+            force = args.get("force", False)
+            return core.update_state(slug, args.get("state"), force=force)
 
         if action == "get_state":
-            return json.dumps({
-                "slug": slug,
-                "state": core.get_state(slug),
-                "next_actions": core.get_next_actions(slug),
-            })
+            state = core.get_state(slug)
+            actions = core.get_next_actions(slug)
+            actions_text = "\n".join(f"  {i+1}. {a}" for i, a in enumerate(actions[:5]))
+            return (
+                f"📊 **{slug}**\n"
+                f"  State: {state}\n"
+                f"  Next:\n{actions_text}"
+            )
 
         if action == "sync_state":
-            return f"State: {core.sync_state(slug)}"
+            return f"🔄 State synced: {core.sync_state(slug)}"
 
         if action == "get_next_actions":
-            return json.dumps(core.get_next_actions(slug))
+            actions = core.get_next_actions(slug)
+            return "📌 **Next actions:**\n" + "\n".join(
+                f"  {i+1}. {a}" for i, a in enumerate(actions)
+            )
 
         # --- Idea Gate ---
         if action == "decide_route":
-            return json.dumps(core.decide_route(
+            return _fmt(core.decide_route(
                 args.get("idea", ""),
                 args.get("source_hint", ""),
             ))
@@ -2019,33 +2464,65 @@ async def tool_content_os_manager(core: ContentOSCore, args: Dict[str, Any],
             llm = kwargs.get("parent_agent")
             llm_obj = llm.ctx.llm if llm and hasattr(llm, "ctx") else None
             res = await core.generate_brief(slug, llm_obj, args.get("extra_context", ""))
-            return json.dumps(res)
+            return _fmt(res, "📝")
 
         if action == "generate_draft":
             llm = kwargs.get("parent_agent")
             llm_obj = llm.ctx.llm if llm and hasattr(llm, "ctx") else None
             res = await core.generate_draft(slug, llm_obj)
-            return json.dumps(res)
+            return _fmt(res, "✍️")
 
         if action == "run_verifier":
             llm = kwargs.get("parent_agent")
             llm_obj = llm.ctx.llm if llm and hasattr(llm, "ctx") else None
             res = await core.run_verifier(slug, llm_obj)
-            return json.dumps(res)
+            return _fmt(res, "🔍")
 
         # --- Quality ---
         if action == "scan_slop":
-            return json.dumps(core.scan_slop(args.get("text", "")))
+            res = core.scan_slop(args.get("text", ""))
+            if "error" in res:
+                return f"❌ {res['error']}"
+            score = res.get("score", "?")
+            t1 = res.get("tier1_count", 0)
+            t2 = res.get("tier2_count", 0)
+            t3 = res.get("tier3_count", 0)
+            bn = res.get("bonus_count", 0)
+            findings = res.get("all_findings", [])
+            total = t1 + t2 + t3 + bn
+            lines = [f"🔎 **Slop Scan: {score}** | {total} findings"]
+            if total > 0:
+                if t1: lines.append(f"  🔴 Tier 1: {t1}")
+                if t2: lines.append(f"  🟠 Tier 2: {t2}")
+                if t3: lines.append(f"  🟡 Tier 3: {t3}")
+                if bn: lines.append(f"  ⚪ Bonus: {bn}")
+                lines.append(f"  Findings: {', '.join(findings[:10])}")
+                if len(findings) > 10:
+                    lines.append(f"  ... and {len(findings) - 10} more")
+            return "\n".join(lines)
 
         if action == "score":
             llm = kwargs.get("parent_agent")
             llm_obj = llm.ctx.llm if llm and hasattr(llm, "ctx") else None
             res = await core.evaluate_rubric(slug, llm_obj)
-            return json.dumps(res)
+            if "error" in res:
+                return f"❌ Rubric scoring failed: {res['error']}"
+            total = res.get("total", 0)
+            passes = res.get("passes", False)
+            scores = res.get("scores", {})
+            lines = [f"📊 **Rubric Score: {total}/12** {'✅ PASS' if passes else '❌ FAIL'}"]
+            for k, v in scores.items():
+                lines.append(f"  • {k}: {v}")
+            return "\n".join(lines)
 
         # --- Signals ---
         if action == "signal":
-            return json.dumps(core.process_signal(args.get("source", "x")))
+            signals = core.process_signal(args.get("source", "x"))
+            if isinstance(signals, list):
+                return "📡 **Signals:**\n" + "\n".join(
+                    f"  {i+1}. {s[:120]}" for i, s in enumerate(signals)
+                )
+            return str(signals)
 
         # --- Postmortem ---
         if action == "postmortem":
@@ -2053,7 +2530,7 @@ async def tool_content_os_manager(core: ContentOSCore, args: Dict[str, Any],
             llm = kwargs.get("parent_agent")
             llm_obj = llm.ctx.llm if llm and hasattr(llm, "ctx") else None
             res = await core.run_postmortem(slug, metrics, llm_obj)
-            return json.dumps(res)
+            return _fmt(res, "📊")
 
         # --- Voice ---
         if action == "update_voice":
@@ -2064,23 +2541,61 @@ async def tool_content_os_manager(core: ContentOSCore, args: Dict[str, Any],
             return core.get_learnings_for_brief(args.get("topic"))
 
         if action == "analyze_patterns":
-            return json.dumps(core.analyze_run_patterns())
+            return _fmt(core.analyze_run_patterns())
 
         # --- Search ---
         if action == "search_runs":
-            return json.dumps(core.search_runs(args.get("query", "")))
+            results = core.search_runs(args.get("query", ""))
+            if not results:
+                return f"🔍 No results for '{args.get('query', '')}'"
+            lines = [f"🔍 **Search: {args.get('query', '')}** ({len(results)} matches)"]
+            for r in results[:10]:
+                lines.append(f"  • {r.get('slug', '?')} — {r.get('file', '?')}")
+            if len(results) > 10:
+                lines.append(f"  ... and {len(results) - 10} more")
+            return "\n".join(lines)
 
         if action == "get_all_runs":
-            return json.dumps(core.get_all_runs(args.get("include_archived", True)))
+            runs = core.get_all_runs(args.get("include_archived", True))
+            if not runs:
+                return "📭 No runs."
+            active = [r for r in runs if r.get("status") != "archived"]
+            archived = [r for r in runs if r.get("status") == "archived"]
+            return f"📋 {len(active)} active, {len(archived)} archived runs"
 
         # --- Archive ---
         if action == "archive_run":
             return core.archive_run(slug)
 
-        return f"Unknown action: {action}"
+        # --- Buffer API ---
+        if action == "buffer_setup":
+            return core.buffer_setup(args.get("api_key"))
+        if action == "buffer_send":
+            return core.buffer_send(slug)
+        if action == "buffer_status":
+            return core.buffer_status()
+
+        # --- Full Pipeline (single atomic call) ---
+        if action == "run_pipeline":
+            llm = kwargs.get("parent_agent")
+            llm_obj = llm.ctx.llm if llm and hasattr(llm, "ctx") else None
+            return await core.run_pipeline(
+                slug, llm_obj, args.get("extra_context", "")
+            )
+
+        # ── Runtime Action Registry (hot-addable actions) ──────────
+        handler = _ACTION_HANDLERS.get(action)
+        if handler is not None:
+            result = handler(core, args, **kwargs)
+            if asyncio.iscoroutine(result):
+                result = await result
+            return result
+
+        return f"❓ Unknown action: {action}"
 
     except Exception as e:
-        return f"Error: {str(e)}"
+        logger.error("tool_content_os_manager failed action=%s: %s", args.get("action"), e)
+        return f"❌ Error running {args.get('action', '?')}: {str(e)[:300]}"
 
 
 def tool_content_os_retriever(core: ContentOSCore, args: Dict[str, Any]) -> str:

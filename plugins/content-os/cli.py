@@ -1,5 +1,5 @@
 """
-CLI registration for Content OS v2.4.0.
+CLI registration for Content OS v2.5.0.
 
 Full CLI interface: setup, status, audit, new, brief, draft, verify,
 scan, score, signal, postmortem, learnings, patterns, search, runs,
@@ -11,7 +11,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich.syntax import Syntax
-from content_os_core import ContentOSCore
+from .content_os_core import ContentOSCore
 
 console = Console()
 
@@ -56,7 +56,7 @@ def register_cli(content_parser, core: ContentOSCore):
     verify_parser.add_argument("--llm", action="store_true", help="Use LLM for verification")
 
     # ── Quality ──
-    scan_parser = subs.add_parser("scan", help="Scan a draft for 54 slop patterns")
+    scan_parser = subs.add_parser("scan", help="Scan a draft for 107 slop patterns (3 tiers + bonus)")
     scan_parser.add_argument("slug", help="The content slug to scan")
 
     score_parser = subs.add_parser("score", help="Score a draft against 12-point rubric")
@@ -102,6 +102,19 @@ def register_cli(content_parser, core: ContentOSCore):
 
     # ── Brand Foundation ──
     subs.add_parser("extract-brand", help="Extract brand foundation from raw notes (interactive)")
+
+    # ══════════════════════════════════════════════════════════════
+    # BUFFER API SUBCOMMAND
+    # ══════════════════════════════════════════════════════════════
+
+    buffer_parser = subs.add_parser("buffer", help="Buffer.com API — send drafts to Buffer queue")
+    buffer_subs = buffer_parser.add_subparsers(dest="buffer_command")
+
+    buffer_subs.add_parser("setup", help="Configure Buffer API (API key → org → channel)")
+    buffer_subs.add_parser("status", help="Show Buffer integration status")
+
+    send_parser = buffer_subs.add_parser("send", help="Send a run's draft to Buffer as draft posts")
+    send_parser.add_argument("slug", help="Content slug to send")
 
     # ══════════════════════════════════════════════════════════════
     # HANDLER
@@ -407,6 +420,25 @@ def register_cli(content_parser, core: ContentOSCore):
                 title="Content OS — Brand Foundation Extraction",
                 border_style="blue",
             ))
+
+        # ── Buffer API ──
+        elif cmd == "buffer":
+            bcmd = args.buffer_command
+
+            if bcmd == "setup":
+                result = core.buffer_setup()
+                console.print(result)
+
+            elif bcmd == "status":
+                result = core.buffer_status()
+                console.print(result)
+
+            elif bcmd == "send":
+                result = core.buffer_send(args.slug)
+                console.print(result)
+
+            else:
+                buffer_parser.print_help()
 
         else:
             content_parser.print_help()

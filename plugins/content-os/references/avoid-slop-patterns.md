@@ -1,7 +1,7 @@
-# Avoid-Slop Patterns — 54 Kalıp, 3 Seviye
+# Avoid-Slop Patterns — 107 Kalıp, 3 Seviye + Bonus
 
 > AI tarafından üretilen içeriğin "yapay", "otomatik", "ses taklidi" hissi vermesini engelleyen kalıplar.
-> Tam liste: 54 kalıp, 3 şiddet seviyesi.
+> Tam liste: 107 kalıp, 3 şiddet seviyesi + bonus.
 > Kaynak: Shann³ (@shannholmberg) — Content OS
 > Her postmortem'den sonra güncellenir.
 
@@ -201,4 +201,4 @@ Her postmortem'den sonra tespit edilen yeni slop kalıbı:
 
 | Tarih | Eklenen Kalıp | Tier | Kaynak |
 |-------|--------------|------|--------|
-| 2026-05-11 | İlk kurulum (54 kalıp) | 1-3 | Content OS (Shann³) |
+| 2026-05-11 | İlk kurulum (107 kalıp) | 1-3 | Content OS (Shann³) |

@@ -7,7 +7,7 @@
     "format": "TBD",
     "pillar": "TBD",
     "created": "",
-    "updated": "2026-05-13T19:22:53.442804",
+    "updated": "2026-05-13T19:39:19.683936",
     "source_type": "belirsiz"
   },
   "2026-05-knowgraph-projesi-graph-rag-mcp-server-for-code": {
@@ -18,7 +18,7 @@
     "format": "TBD",
     "pillar": "TBD",
     "created": "",
-    "updated": "2026-05-13T19:22:53.451428",
+    "updated": "2026-05-13T19:39:19.686351",
     "source_type": "belirsiz"
   },
   "2026-05-riscv-timing-violation": {
@@ -29,7 +29,183 @@
     "format": "TBD",
     "pillar": "TBD",
     "created": "",
-    "updated": "2026-05-13T19:22:53.457876",
+    "updated": "2026-05-13T19:39:19.688281",
     "source_type": "belirsiz"
+  },
+  "2026-05-test-hermes": {
+    "slug": "2026-05-test-hermes",
+    "title": "Test idea for Hermes",
+    "state": "captured",
+    "route": "ORIGINAL",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "2026-05-13T22:33:29.319893",
+    "updated": "2026-05-13T22:33:29.319901",
+    "source_type": "belirsiz"
+  },
+  "2026-05-wordpress-kurulumu-ad-m-ad-m-rehber-ssl-domain": {
+    "slug": "2026-05-wordpress-kurulumu-ad-m-ad-m-rehber-ssl-domain",
+    "title": "WordPress kurulumu: Adım adım rehber (SSL, domain, hosting)",
+    "state": "draft_review",
+    "route": "ORIGINAL",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "2026-05-13T21:06:22.156823",
+    "updated": "2026-05-13T21:13:19.328746",
+    "source_type": "kişisel"
+  },
+  "2026-05-ai-operating-system-mimarisi-scheduler-memory-bu": {
+    "slug": "2026-05-ai-operating-system-mimarisi-scheduler-memory-bu",
+    "title": "AI Operating System Mimarisi: Scheduler, Memory Bus, Cognition Runtime, Execution Graph, Agent Registry ve Event Mesh — 6 katmanlı AI-native runtime tasarımı. LLM çağıran her uygulama AI sistemi değildir, gerçek AI OS nasıl inşa edilir?",
+    "state": "published",
+    "route": "ORIGINAL",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "2026-05-15T08:21:16.091701",
+    "updated": "2026-05-15T08:53:07.858062",
+    "source_type": "kişisel"
+  },
+  "2026-05-test-idea": {
+    "slug": "2026-05-test-idea",
+    "title": "test idea",
+    "state": "captured",
+    "route": "ORIGINAL",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "2026-05-17T10:36:06.108072",
+    "updated": "2026-05-17T10:36:06.108081",
+    "source_type": "belirsiz"
+  },
+  "2026-05-gunluk-ai-gelismeleri-17-mayis-2026-self-improvi": {
+    "slug": "2026-05-gunluk-ai-gelismeleri-17-mayis-2026-self-improvi",
+    "title": "Gunluk AI Gelismeleri 17 Mayis 2026 - Self-Improving AI Cagi Basliyor: Recursive $650M ile Cikti",
+    "state": "verification",
+    "route": "REWRITE",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "",
+    "updated": "2026-05-17T11:24:31.271807",
+    "source_type": "belirsiz"
+  },
+  "2026-05-g-nl-k-ai-geli-meleri-17-may-s-2026-google-i-o-4": {
+    "slug": "2026-05-g-nl-k-ai-geli-meleri-17-may-s-2026-google-i-o-4",
+    "title": "Günlük AI Gelişmeleri 17 Mayıs 2026 — Google I/O 48 Saat Kaldı, Anthropic $900B, Meta Avocado Sessiz",
+    "state": "scheduled",
+    "route": "REWRITE",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "2026-05-17T15:46:08.315073",
+    "updated": "2026-05-17T15:50:41.796167",
+    "source_type": "harici"
+  },
+  "2026-05-g-nl-k-ai-geli-meleri-17-may-s-2026-google-i-o-p": {
+    "slug": "2026-05-g-nl-k-ai-geli-meleri-17-may-s-2026-google-i-o-p",
+    "title": "Günlük AI Gelişmeleri 17 Mayıs 2026 — Google I/O Pazar, Anthropic $900B, ElevenLabs $11B",
+    "state": "scheduled",
+    "route": "REWRITE",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "2026-05-17T16:04:43.847671",
+    "updated": "2026-05-17T16:29:04.103082",
+    "source_type": "harici"
+  },
+  "2026-05-test-run-pipeline-single-atomic-call-test": {
+    "slug": "2026-05-test-run-pipeline-single-atomic-call-test",
+    "title": "Test: run_pipeline — single atomic call test",
+    "state": "captured",
+    "route": "ORIGINAL",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "2026-05-17T16:37:09.590824",
+    "updated": "2026-05-17T16:37:09.590829",
+    "source_type": "kişisel"
+  },
+  "2026-05-claude-sonnet-5-kt-anthropic-in-yeni-modeli-pr": {
+    "slug": "2026-05-claude-sonnet-5-kt-anthropic-in-yeni-modeli-pr",
+    "title": "Claude Sonnet 5 Çıktı: Anthropic'in yeni modeli programming benchmark'larında GPT-5.5'i geçti, reasoning task'lerinde %40 iyileşme",
+    "state": "draft_review",
+    "route": "REWRITE",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "2026-05-17T16:45:59.646912",
+    "updated": "2026-05-17T16:52:52.447969",
+    "source_type": "harici"
+  },
+  "2026-05-ai-news-may-17-2026-google-i-o-48-hours-out-ant": {
+    "slug": "2026-05-ai-news-may-17-2026-google-i-o-48-hours-out-ant",
+    "title": "AI News May 17 2026 — Google I/O 48 Hours Out, Anthropic $900B, Meta Avocado Delayed, GPT-5.5 Instant Ships",
+    "state": "verification",
+    "route": "REWRITE",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "2026-05-17T17:06:45.289016",
+    "updated": "2026-05-17T17:17:31.729834",
+    "source_type": "harici"
+  },
+  "2026-05-google-i-o-2026-bug-n-ba-l-yor-android-gemini": {
+    "slug": "2026-05-google-i-o-2026-bug-n-ba-l-yor-android-gemini",
+    "title": "Google I/O 2026 bugün başlıyor — Android, Gemini, Pixel ve AI odaklı tüm büyük duyuruların sistem mühendisi gözüyle analizi. Gemma 3, Project Astra, AI-first Android, yeni Pixel hardware ve Google'ın AI infrastructure roadmap'i.",
+    "state": "scheduled",
+    "route": "REWRITE",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "2026-05-17T17:51:29.226242",
+    "updated": "2026-05-17T18:09:40.414319",
+    "source_type": "harici"
+  },
+  "2026-05-17-codevoyage-bulletin": {
+    "slug": "2026-05-17-codevoyage-bulletin",
+    "title": "CodeVoyage Günlük Bülteni — 17 Mayıs 2026: Anthropic Enterprise'da OpenAI'yi Geçti",
+    "state": "scheduled",
+    "route": "REWRITE",
+    "format": "Twitter Thread (8 tweets)",
+    "pillar": "Daily AI News",
+    "created": "",
+    "updated": "2026-05-17T19:06:01.380496",
+    "source_type": "belirsiz"
+  },
+  "2026-05-codevoyage-g-nl-k-b-lteni-17-may-s-2026-google": {
+    "slug": "2026-05-codevoyage-g-nl-k-b-lteni-17-may-s-2026-google",
+    "title": "CodeVoyage Günlük Bülteni • 17 Mayıs 2026 — Google I/O, Anthropic $900B, US-China AI Talks",
+    "state": "scheduled",
+    "route": "REWRITE",
+    "format": "Thread (8 tweets)",
+    "pillar": "Pillar 6 — Günlük AI & Tech News",
+    "created": "2026-05-17T19:22:34.864889",
+    "updated": "2026-05-17T19:26:51.433559",
+    "source_type": "external"
+  },
+  "2026-05-codevoyage-bulteni-18-mayis-2026": {
+    "slug": "2026-05-codevoyage-bulteni-18-mayis-2026",
+    "title": "CodeVoyage Günlük Bülteni • 18 Mayıs 2026 — AI Hafta Değerlendirmesi",
+    "state": "draft_review",
+    "route": "REWRITE",
+    "format": "Twitter Thread (8 tweets)",
+    "pillar": "Pillar 6 — Günlük AI & Tech News",
+    "created": "2026-05-18T05:01:41.518313",
+    "updated": "2026-05-18T05:12:00.000000",
+    "source_type": "harici"
+  },
+  "2026-05-flux-v1-0-yay-n-ve-ci-cd-altyap-s-crates-io-pu": {
+    "slug": "2026-05-flux-v1-0-yay-n-ve-ci-cd-altyap-s-crates-io-pu",
+    "title": "Flux v1.0 — Yayın ve CI/CD altyapısı: crates.io publish, GitHub Release, GitHub Actions CI/CD pipeline, Docker Hub push",
+    "state": "captured",
+    "route": "ORIGINAL",
+    "format": "TBD",
+    "pillar": "TBD",
+    "created": "2026-05-18T09:00:27.119790",
+    "updated": "2026-05-18T09:00:27.119813",
+    "source_type": "kişisel"
+  },
+  "2026-05-g-nl-k-ai-geli-meleri-17-may-s-2026-grandcode-ai": {
+    "slug": "2026-05-g-nl-k-ai-geli-meleri-17-may-s-2026-grandcode-ai",
+    "title": "Gunluk AI Gelismeleri 17 Mayis 2026 - GrandCode AI Competitive Programming'de Tum Insanlari Gecti",
+    "state": "draft_review",
+    "route": "REWRITE",
+    "format": "Twitter Thread (8 tweets)",
+    "pillar": "Gunluk AI Haberleri",
+    "created": "2026-05-18T11:04:13.589985",
+    "updated": "2026-05-18T11:05:00.000000",
+    "source_type": "harici"
   }
 }

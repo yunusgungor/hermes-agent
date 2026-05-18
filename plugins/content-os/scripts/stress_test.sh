@@ -5,14 +5,16 @@
 
 set -euo pipefail
 
-PLUGIN_DIR="${1:-$(dirname "$0")}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PLUGIN_DIR="${1:-$(dirname "$SCRIPT_DIR")}"
+
+green() { echo -e "\033[32m✅ $1\033[0m"; }
+red() { echo -e "\033[31m❌ $1\033[0m"; FAIL=$((FAIL+1)); }
+yellow() { echo -e "\033[33m⚠️  $1\033[0m"; }
+bold() { echo -e "\033[1m$1\033[0m"; }
 PASS=0
 FAIL=0
 TOTAL=0
-
-green() { echo -e "\033[32m✅ $1\033[0m"; }
-red()   { echo -e "\033[31m❌ $1\033[0m"; }
-bold()  { echo -e "\033[1m$1\033[0m"; }
 
 cleanup() {
     rm -rf /tmp/content-os-test*
@@ -57,7 +59,7 @@ bold "─── Test 1: Python Module Imports ───"
 python3 -c "
 import sys
 sys.path.insert(0, '$PLUGIN_DIR')
-from content_os_core import ContentOSCore, ContentOSError, VERSION, STATE_LIFECYCLE, IDEA_ROUTES
+from content_os_core import ContentOSCore, VERSION, STATE_LIFECYCLE, IDEA_ROUTES
 from content_os_core import FULL_SLOP_TIER1, FULL_SLOP_TIER2, FULL_SLOP_TIER3, FULL_SLOP_BONUS
 print(f'Version: {VERSION}')
 print(f'States: {len(STATE_LIFECYCLE)} ({STATE_LIFECYCLE})')
@@ -72,10 +74,10 @@ print(f'Total slop patterns: {total_slop}')
 
 # Quick check: version consistency
 PY_VER=$(python3 -c "import sys; sys.path.insert(0, '$PLUGIN_DIR'); from content_os_core import VERSION; print(VERSION)")
-if [ "$PY_VER" = "2.4.0" ]; then
-    green "Plugin version correct: $PY_VER"
+if [ "$PY_VER" = "2.5.0" ]; then
+    green "Version correct: $PY_VER"
 else
-    red "Version wrong: $PY_VER (expected 2.4.0)"
+    red "Version wrong: $PY_VER (expected 2.5.0)"
 fi
 
 assert_contains "14" "$(python3 -c "
@@ -91,19 +93,19 @@ print(len(IDEA_ROUTES))
 ")" "4 Idea Gate routes"
 
 # ════════════════════════════════════════════════════
-# TEST 2: 54+ slop patterns
+# TEST 2: 107+ slop patterns
 # ════════════════════════════════════════════════════
-bold $'\n'"─── Test 2: Slop Pattern Count (54 target) ───"
+bold $'\n'"─── Test 2: Slop Pattern Count (107 target) ───"
 TOTAL_SLOP=$(python3 -c "
 import sys; sys.path.insert(0, '$PLUGIN_DIR')
 from content_os_core import FULL_SLOP_TIER1, FULL_SLOP_TIER2, FULL_SLOP_TIER3, FULL_SLOP_BONUS
 t = len(FULL_SLOP_TIER1) + len(FULL_SLOP_TIER2) + len(FULL_SLOP_TIER3) + len(FULL_SLOP_BONUS)
 print(t)
 ")
-if [ "$TOTAL_SLOP" -ge 54 ]; then
-    green "54+ slop patterns (have $TOTAL_SLOP)"
+if [ "$TOTAL_SLOP" -ge 107 ]; then
+    green "107+ slop patterns (have $TOTAL_SLOP)"
 else
-    red "Only $TOTAL_SLOP slop patterns (need ≥54)"
+    red "Only $TOTAL_SLOP slop patterns (need ≥107)"
 fi
 
 # ════════════════════════════════════════════════════
@@ -458,11 +460,11 @@ else
     red "Version MISMATCH: PY=$PY_VER YAML=$YAML_VER"
 fi
 
-# Check no git in plugin
-if [ ! -d "$PLUGIN_DIR/.git" ]; then
-    green "No .git directory inside plugin (clean)"
+# Check .git directory — expected for the content-os standalone repo
+if [ -d "$PLUGIN_DIR/.git" ]; then
+    green ".git directory present (standalone repo — expected)"
 else
-    red ".git directory still present"
+    yellow "No .git directory (deployment mode — expected if not dev)"
 fi
 
 # Check temp workspace cleanup (no leftover temp dirs)

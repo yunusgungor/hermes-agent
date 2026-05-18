@@ -1,6 +1,6 @@
 ---
 name: content-os
-description: "AI-Augmented Content Production System: structured workflow from signal → idea → brief → draft → verify → publish → feedback. Based on Shann³'s Content OS — 5M impressions in 2 weeks, 100K bookmarks in 2 months. Full implementation: 4 workflows, 54 slop patterns, 2-model setup, Hermes-native commands."
+description: "AI-Augmented Content Production System: structured workflow from signal → idea → brief → draft → verify → publish → feedback. Based on Shann³'s Content OS — 5M impressions in 2 weeks, 100K bookmarks in 2 months. Full implementation: 4 workflows, 107 slop patterns (3 tiers + bonus), 2-model setup, Hermes-native commands."
 version: 2.4.0
 category: productivity
 author: "Adapted from Shann³ (@shannholmberg) — espressioai / LunarStrategy"
@@ -24,9 +24,23 @@ triggers:
 allowed_toolsets: [web, terminal, file, delegation, xurl, session_search, cronjob]
 ---
 
+> ⚠️ **MIGRATED to Prodinamik Engine**
+> This skill now delegates to the `prodinamik` tool. Use `prodinamik action=...` instead.
+> See skill `prodinamik-engine` for full documentation.
+> Original plugin code archived at `plugins/archive/`.
+
+### Migration Examples
+
+| Old Command | New Command |
+|-------------|-------------|
+| `content_os_manager action=new_run` | `prodinamik action=run profile=content` |
+| `/content new` | `/run content new` |
+
+---
+
 # Content OS v2 — AI-Augmented Content Production System
 
-> **Hermes Agent Native Implementation.** Full system: 4 workflows, 4 production prompts, 54 slop patterns, 2-model setup, Hermes-native slash commands, and a 1-2 hour V1 setup.
+> **Hermes Agent Native Implementation.** Full system: 4 workflows, 4 production prompts, 107 slop patterns (3 tiers + bonus), 2-model setup, Hermes-native slash commands, and a 1-2 hour V1 setup.
 > **Kaynak:** Shann³ (@shannholmberg) — 5M impressions (2 hafta), 11M views + 100K bookmarks (2 ay).
 > **Kullanıcı:** Türkçe yanıt tercih eder. Adım adım açıklama beklentisi yüksek. Kapsamlı/exhaustive kontrol ister.
 
@@ -103,63 +117,63 @@ Bu skill yüklendiğinde aşağıdaki iş akışları doğrudan kullanılabilir:
 ### İçerik Üretim Komutları
 
 ```
-/content new [idea]        — Yeni içerik objesi başlat (idea verilirse brief ile başla)
-/content brief [post]       — Verilen post/topic için brief.md oluştur
-/content draft [slug]       — brief.md oku, draft-package.md üret
-/content verify [slug]      — Taslağı rubric + slop kontrol et
-/content post [slug]        — Onaylı taslağı X'e gönder (xurl ile)
-/content postmortem [slug] — Yayınlanmış post'un metriklerini analiz et (72s sonra)
-/content feedback [slug]   — Yayın sonrası feedback topla (24s + 72s)
-/content score [draft]     — Bookmarkability rubric puanla (0-12)
-/content audit             — Tüm runs/ klasörünü kontrol et, eksik dosyaları raporla
+/run content new [idea]        — Yeni içerik objesi başlat (idea verilirse brief ile başla)
+/run content brief [post]       — Verilen post/topic için brief.md oluştur
+/run content draft [slug]       — brief.md oku, draft-package.md üret
+/run content verify [slug]      — Taslağı rubric + slop kontrol et
+/run content post [slug]        — Onaylı taslağı X'e gönder (xurl ile)
+/run content postmortem [slug] — Yayınlanmış post'un metriklerini analiz et (72s sonra)
+/run content feedback [slug]   — Yayın sonrası feedback topla (24s + 72s)
+/run content score [draft]     — Bookmarkability rubric puanla (0-12)
+/run content audit             — Tüm runs/ klasörünü kontrol et, eksik dosyaları raporla
 ```
 
 ### Sistem Kurulum Komutları
 
 ```
-/content setup            — Etkileşimli V1 kurulum sihirbazı (1-2 saat)
-/content scaffold         — Sadece klasör yapısını oluştur (dosyaları doldurmaz)
-/content seeds            — İlk 10 fikri inbox'a koy (demo amaçlı)
-/content extract-brand    — Ham notlardan brand foundation çıkar (prompt tetikleyici)
+/run content setup            — Etkileşimli V1 kurulum sihirbazı (1-2 saat)
+/run content scaffold         — Sadece klasör yapısını oluştur (dosyaları doldurmaz)
+/run content seeds            — İlk 10 fikri inbox'a koy (demo amaçlı)
+/run content extract-brand    — Ham notlardan brand foundation çıkar (prompt tetikleyici)
 ```
 
-> **Not:** `/content audit` komutu hem İçerik Üretim hem Sistem Kurulum bölümünde geçerlidir — çalıştırıldığında tüm Content OS yapısını (runs/, stores/, strategy/, voice/) kontrol eder.
+> **Not:** `/run content audit` komutu hem İçerik Üretim hem Sistem Kurulum bölümünde geçerlidir — çalıştırıldığında tüm Content OS yapısını (runs/, stores/, strategy/, voice/) kontrol eder.
 
 ### İçerik Stratejisi Komutları
 
 ```
-/content signal            — Sinyal katmanını tara, yeni fikirleri inbox'a ekle
-/content ideas             — Tüm fikirleri listele (inbox + ideas/)
-/content hooks             — Hook bank'ı göster/güncelle
-/content proof             — Proof bank'ı göster/güncelle
-/content backlog           — Workboard'daki bekleyen içerikleri göster
-/content archive           — Tamamlanmış run folder'ları listele
-/content metrics           — Tüm yayınlanmış post'ların metriklerini topla
-/content archive-do [slug] — Run folder'ı active'dan archive'a taşı; state=learned zorunlu, runs/archive/ klasörüne kopyalar, active/ klasöründen siler
-/content state [slug]        — content-object.md state'ini oku + güncelle (state machine tablosu otomatik güncellenir)
-/content archive             — Tamamlanmış run folder'ları listele
+/run content signal            — Sinyal katmanını tara, yeni fikirleri inbox'a ekle
+/run content ideas             — Tüm fikirleri listele (inbox + ideas/)
+/run content hooks             — Hook bank'ı göster/güncelle
+/run content proof             — Proof bank'ı göster/güncelle
+/run content backlog           — Workboard'daki bekleyen içerikleri göster
+/run content archive           — Tamamlanmış run folder'ları listele
+/run content metrics           — Tüm yayınlanmış post'ların metriklerini topla
+/run content archive-do [slug] — Run folder'ı active'dan archive'a taşı; state=learned zorunlu, runs/archive/ klasörüne kopyalar, active/ klasöründen siler
+/run content state [slug]        — content-object.md state'ini oku + güncelle (state machine tablosu otomatik güncellenir)
+/run content archive             — Tamamlanmış run folder'ları listele
 ```
 
 ### Kullanım Örnekleri
 
 ```
 # 1) Sıfırdan içerik sistemi kur
-/content setup
+/run content setup
 
 # 2) Yeni fikirle içerik üret (hızlı yol)
 Yapay zeka ile kod üretimi hakkında bir thread yaz
 → Hermes: Idea gate'e gir, brief.md oluştur, draft üret, rubric kontrol et
 
 # 3) Mevcut bir fikri geliştir
-/content brief "verilog pipeline optimization"
-/content draft 2026-05-verilog-pipeline
+/run content brief "verilog pipeline optimization"
+/run content draft 2026-05-verilog-pipeline
 
 # 4) Yayınlanmış post'unu analiz et
-/content feedback 2026-05-verilog-pipeline
+/run content feedback 2026-05-verilog-pipeline
 (Metrikleri sor, 24s ve 72s raporlarını iste, learnings çıkar)
 
 # 5) Sistemin tamamını kontrol et
-/content audit
+/run content audit
 ```
 
 ---
@@ -259,7 +273,7 @@ Yapay zeka ile kod üretimi hakkında bir thread yaz
 ║  │                   ⭐ İNSAN TARAFINDAN DÜZENLENEN TEK KATMAN    │    ║
 ║  │                                                                │    ║
 ║  │  voice/          voice-profile.md (5 kural + 5 yasak + refs)   │    ║
-║  │                  master-avoid-slop.md (54 kalıp, 3 seviye)      │    ║
+║  │                  master-avoid-slop.md (107 kalıp, 3 seviye + bonus)      │
 ║  │                                                                │    ║
 ║  │  stores/         inbox.md, workboard.md, ideas/, hooks/,       │    ║
 ║  │                  proof/, feedback/                            │    ║
@@ -349,7 +363,7 @@ FIKIR GİRİŞİ
 │   ├── voice-profile.md                  ← Üslup profili. 5 kural + 5 yasak + 2-3 referans.
 │   │                                      Her Writer/Verifier çağrısından önce yüklenir.
 │   │
-│   └── master-avoid-slop.md              ← 54 AI slop kalıbı, 3 şiddet seviyesi.
+│   └── master-avoid-slop.md              ← 107 AI slop kalıbı, 3 şiddet seviyesi + bonus
 │                                          Tam liste: references/avoid-slop-patterns.md
 │
 ├── stores/                               ← Ham malzeme deposu
@@ -566,7 +580,7 @@ TOPLAM: 10/12 ✅ YAYINLA
 
 ## 🚫 Avoid-Slop Dokümanı — Özet
 
-Tam liste: `references/avoid-slop-patterns.md` (54 kalıp, 3 seviye)
+Tam liste: `references/avoid-slop-patterns.md` (107 kalıp, 3 seviye + bonus)
 
 ### Tier 1 — Kritik (Sıfır Tolerans, Derhal Düzelt)
 
@@ -837,7 +851,7 @@ Tam içerikler için `skill_view(name='content-os', file_path='...')` kullan:
 |-------|--------|
 | `references/production-prompts.md` | 4 üretim prompt'u (Research, Writer, Verifier, Postmortem) + Brand Foundation Extraction + Voice Profile |
 | `references/audit-technique.md` | **Audit/dogrulama teknigi:** terminal vs execute_code — neden terminal daha guvenilir, dogru/yanlis pattern'ler |
-| `references/avoid-slop-patterns.md` | 54 kalip, 3 Siddet seviyesi, her biri icin concrete rewrite ornekleri |
+| `references/avoid-slop-patterns.md` | 107 kalip, 3 Siddet seviyesi + bonus, her biri icin concrete rewrite ornekleri |
 | `references/rubric-template.md` | Doldurulabilir Bookmarkability Rubric şablonu |
 | `references/skill-audit-checklist.md` | **Skill eksiksizlik kontrolü** — 5 katmanlı systematic audit metodolojisi (✅ her "eksiksiz kontrol" isteğinde uygula) |
 | `scripts/setup-content-os.sh` | Otomatik V1 kurulum scripti |
@@ -845,7 +859,7 @@ Tam içerikler için `skill_view(name='content-os', file_path='...')` kullan:
 | `workflows/verifier-checklist.md` | Verifier için adım adım kontrol listesi |
 | `workflows/scheduler-handoff.md` | Planlayıcıya teslim prosedürü |
 | `workflows/feedback-loop.md` | 24s/72s feedback mekanizması |
-| `workflows/archiveling.md` | Run folder'ı active'dan archive'a taşıma prosedürü, /content archive-do komutu |
+| `workflows/archiveling.md` | Run folder'ı active'dan archive'a taşıma prosedürü, /run content archive-do komutu |
 
 ---
 

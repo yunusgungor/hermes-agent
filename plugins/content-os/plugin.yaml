@@ -1,6 +1,6 @@
 name: content-os
-version: 2.4.0
-description: "AI-Augmented Content Production System: signal → idea → brief → draft → verify → post → feedback. Full Content OS implementation with 4-route Idea Gate, 14-state lifecycle, 54 slop patterns, Writer/Verifier dual-agent pipeline."
+version: 2.5.0
+description: "AI-Augmented Content Production System: signal → idea → brief → draft → verify → post → feedback. Full Content OS implementation with 4-route Idea Gate, 14-state lifecycle, 107 slop patterns (3 tiers + bonus), Writer/Verifier dual-agent pipeline, Buffer API publishing."
 author: "Adapted from Shann³ (@shannholmberg)"
 kind: standalone
 hooks:

@@ -285,7 +285,7 @@ EOF
     cat > "$CONTENT_OS_PATH/voice/master-avoid-slop.md" <<'EOF'
 # Master Avoid-Slop Document
 
-> 54 AI slop kalıbı, 3 şiddet seviyesi.
+> 107 AI slop kalıbı, 3 şiddet seviyesi + bonus.
 > Başlangıç: Tier 1 (8 kalıp). Her postmortem'den sonra güncellenir.
 > Kaynak: Shann³ (@shannholmberg) — Content OS
 
@@ -579,7 +579,7 @@ EOF
 
 Content OS SKILL.md — Ana doküman
 references/production-prompts.md — 4 üretim prompt'u
-references/avoid-slop-patterns.md — 54 slop kalıbı
+references/avoid-slop-patterns.md — 107 slop kalıbı
 EOF
     log_success "workflows/README.md yazıldı"
 }
@@ -680,7 +680,7 @@ content-os/
 |-------|---------|
 | \`strategy/positioning.md\` | Tek cümlelik pozisyonlama |
 | \`voice/voice-profile.md\` | Üslup Profili (5 kural + 5 yasak) |
-| \`voice/master-avoid-slop.md\` | 54 AI slop kalıbı |
+| \`voice/master-avoid-slop.md\` | 107 AI slop kalıbı + bonus |
 | \`stores/inbox.md\` | Ham fikirler |
 | \`stores/proof/_INDEX.md\` | Kanıt bankası |
 | \`runs/active/{slug}/\` | Aktif içerik objeleri |

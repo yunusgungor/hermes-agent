@@ -243,7 +243,7 @@ THESE ARE MANDATORY. Do not skip any file.
    Resolved path: `$CONTENT_OS_PATH/references/rubric-template.md`
    Or inline in: `~/.hermes/skills/productivity/content-os/references/rubric-template.md`
 
-4. master-avoid-slop.md — 54 patterns to catch.
+4. master-avoid-slop.md — 107 patterns to catch (3 tiers + bonus).
    Resolved path: `$CONTENT_OS_PATH/voice/master-avoid-slop.md`
    Full reference: `~/.hermes/skills/productivity/content-os/references/avoid-slop-patterns.md`
 
@@ -546,7 +546,7 @@ IMPORTANT NOTES:
 ```markdown
 ROLE
 You are analyzing a creator's existing posts to extract their authentic
-voice DNA. You will identify patterns that make their writing distinctly
+voice (üslup). You will identify patterns that make their writing distinctly
 theirs — and patterns that don't belong.
 
 INPUT

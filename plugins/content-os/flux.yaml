@@ -1,0 +1,57 @@
+# Content-OS workflow with dependencies (v0.4.0)
+
+# Pipeline task'leri
+build:
+  command: "echo Building Content-OS..."
+  description: "Build aşaması"
+  runner: "shell"
+
+test:
+  command: "echo Testing Content-OS..."
+  description: "Test aşaması"
+  runner: "shell"
+  depends_on: ["build"]
+
+lint:
+  command: "echo Linting Content-OS..."
+  description: "Lint kontrolü"
+  runner: "shell"
+  depends_on: ["build"]
+
+# Publish pipeline - dependency chain
+validate:
+  command: "echo Validating package..."
+  description: "Pre-publish validation"
+  runner: "shell"
+  depends_on: ["test", "lint"]
+  pre_hook: "echo Pre-flight checks..."
+  post_hook: "echo Validation complete"
+
+publish:
+  command: "echo Publishing to registry..."
+  description: "Publish to npm/cargo"
+  runner: "shell"
+  depends_on: ["validate"]
+  pre_hook: "echo Publish checklist"
+  post_hook: "echo Published successfully!"
+
+# Gerçek Python task'leri
+py-test:
+  command: "pytest tests/ -v --tb=short 2>/dev/null || echo 'No tests found'"
+  description: "Pytest ile tüm testleri çalıştır"
+  runner: "python"
+
+py-lint:
+  command: "pylint *.py --disable=C0103,C0111,R0903 2>/dev/null || echo 'No pylint'"
+  description: "Python kod kalite kontrolü"
+  runner: "python"
+
+quick-check:
+  command: "python -m py_compile __init__.py cli.py content_os_core.py 2>/dev/null && echo '✅ Syntax OK'"
+  description: "Hızlı syntax kontrolü"
+  runner: "python"
+
+clean-pycache:
+  command: "python3 scripts/clean_cache.py 2>/dev/null || echo 'Cache temiz'"
+  description: "Python cache dosyalarını temizle"
+  runner: "python"
