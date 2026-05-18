@@ -1,1 +1,0 @@
-{"sequence": 3, "run_slug": "test-ai-developments-this-week", "timestamp": "2026-05-19T00:06:42.880364", "event_type": "state_transition", "data": {"from": "idea_review", "to": "brief_ready"}, "parent_id": null, "trace_id": null, "hop_count": 0, "cost_usd": 0.0, "validator_tier": 1}
