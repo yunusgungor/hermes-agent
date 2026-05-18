@@ -1,0 +1,6 @@
+name: prodinamik-engine
+version: 1.8.0
+description: "Workflow engine: state machine, validation, event sourcing, AI Grid, Raft consensus"
+type: general
+author: Yunus Güngör
+license: MIT

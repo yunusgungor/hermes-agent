@@ -1,0 +1,1 @@
+{"sequence": 1, "run_slug": "bridge-test-run", "timestamp": "2026-05-18T22:51:50.953172", "event_type": "state_transition", "data": {"from": "", "to": "captured"}, "parent_id": null, "trace_id": null, "hop_count": 0, "cost_usd": 0.0, "validator_tier": 1}

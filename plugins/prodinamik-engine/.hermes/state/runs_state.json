@@ -1,0 +1,14 @@
+{
+  "bridge-test-run": {
+    "state": "captured",
+    "profile": "content",
+    "status": "active",
+    "updated_at": "2026-05-18T22:51:50.951052"
+  },
+  "test": {
+    "state": "spec",
+    "profile": "software",
+    "status": "active",
+    "updated_at": "2026-05-18T22:56:28.160711"
+  }
+}
