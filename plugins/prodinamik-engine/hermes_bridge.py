@@ -39,6 +39,47 @@ def _get_engine():
             # Point data_dir to plugin's .hermes/
             cfg.data_dir = str(plugin_root / ".hermes")
             _engine = AsyncEngine(cfg)
+            
+            # HITL timeout callback: Telegram bildirimi
+            def _hitl_timeout_notify(**kw):
+                """HITL timeout bildirimini Telegram'a push'la"""
+                try:
+                    slug = kw.get("slug", "")
+                    state = kw.get("state", "")
+                    elapsed = kw.get("elapsed", 0)
+                    policy = kw.get("policy", "proceed")
+                    reminder = kw.get("reminder", "")
+                    
+                    hours = int(elapsed // 3600)
+                    minutes = int((elapsed % 3600) // 60)
+                    
+                    msg = (
+                        f"⏰ **HITL Timeout**\n"
+                        f"   `{slug}` → **{state}**\n"
+                        f"   Bekleme: {hours}s {minutes}d\n"
+                        f"   Politika: `{policy}`\n"
+                    )
+                    if reminder:
+                        msg += f"   {reminder}\n"
+                    
+                    if policy == "hold":
+                        msg += f"\n   ⏸️ Hâlâ cevap bekliyor..."
+                    elif policy == "proceed":
+                        msg += f"\n   ➡️ Otomatik devam edildi"
+                    elif policy == "abort":
+                        msg += f"\n   🛑 İptal edildi"
+                    
+                    try:
+                        from run_agent import AIAgent
+                        agent = AIAgent()
+                        agent.send_message("telegram", msg)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            
+            _engine.on_hitl_timeout(_hitl_timeout_notify)
+            
             logger.info(f"Prodinamik Engine initialized (data_dir={cfg.data_dir})")
         except Exception as e:
             logger.error(f"Engine init failed: {e}")
@@ -286,7 +327,13 @@ def handle_next(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def handle_transition(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Execute a state transition."""
+    """Execute a state transition with HITL support.
+    
+    Normal transition yapar. Yeni state bir PAUSE/ask_user state'i ise
+    awaiting_input=True + questions döndürür.
+    
+    Agent bu response'u görünce OTOMATİK clarify kullanmalıdır.
+    """
     slug = args.get("slug", "")
     target_state = args.get("target_state", "")
     if not slug or not target_state:
@@ -302,10 +349,56 @@ def handle_transition(args: Dict[str, Any]) -> Dict[str, Any]:
         # Capture old state before transition
         old_run = engine.get_run(slug)
         old_state = old_run.meta.state if old_run else "unknown"
-        # Support optional runtime_overrides for condition bypass
-        overrides = args.get("runtime_overrides", None)
-        run = engine._do_transition(slug, target_state, runtime_overrides=overrides)
-        return {"slug": slug, "state": run.meta.state, "from_state": old_state, "transition": target_state}
+        
+        # Use transition_with_hitl for HITL-aware transitions
+        # Fallback: if user passes direct target_state without HITL context,
+        # use _do_transition for backward compatibility
+        hitl_check = args.get("hitl", True)  # Default: check HITL
+        
+        if hitl_check:
+            result = engine.transition_with_hitl(slug, target_state)
+            if not result.get("success"):
+                # If transition_with_hitl fails, try _do_transition as fallback
+                run = engine._do_transition(slug, target_state)
+                base = {"slug": slug, "state": run.meta.state, "from_state": old_state, "transition": target_state}
+                # Check if new state is a PAUSE state
+                profile = engine._get_profile(run.meta.profile)
+                sm = profile.state_machine if profile else None
+                if sm and sm.is_pause_state(run.meta.state):
+                    from engine.state_machine import RuntimeState
+                    rt = RuntimeState(current_state=run.meta.state)
+                    questions = sm.get_hitl_questions(run.meta.state, rt)
+                    if questions:
+                        base["awaiting_input"] = True
+                        base["questions"] = [
+                            {"question": q["question"], "type": q["type"],
+                             "choices": q.get("choices", [])}
+                            for q in questions
+                        ]
+                        base["_hitl"] = True
+                        base["_instruction"] = "Kullanıcıya clarify ile sor, cevabı resume(action='resume', slug=..., answers={'answer': ...}) ile ilet"
+                return base
+            
+            if result.get("awaiting_input"):
+                return {
+                    "slug": slug,
+                    "state": result["current_state"],
+                    "from_state": old_state,
+                    "transition": target_state,
+                    "awaiting_input": True,
+                    "questions": result.get("questions", []),
+                    "timeout": result.get("timeout", 300),
+                    "_hitl": True,
+                    "_instruction": "Kullanıcıya clarify ile sor, cevabı resume(action='resume', slug=..., answers={'answer': ...}) ile ilet",
+                }
+            
+            # Normal transition - no HITL
+            return {"slug": slug, "state": result["current_state"], "from_state": old_state, "transition": target_state}
+        else:
+            # Legacy mode: no HITL checking
+            run = engine._do_transition(slug, target_state)
+            return {"slug": slug, "state": run.meta.state, "from_state": old_state, "transition": target_state}
+            
     except ValueError as e:
         return {"error": str(e)}
     except Exception as e:

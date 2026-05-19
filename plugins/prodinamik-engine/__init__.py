@@ -39,7 +39,7 @@ def register(ctx: Any) -> None:
         "name": "prodinamik",
         "description": (
             "Prodinamik Engine — workflow management. "
-            "46 actions: core (run, list, status, approve, reject, next, "
+            "47 actions: core (run, list, status, approve, reject, next, "
             "transition, resume, dashboard, budget) + "
             "content (setup, audit, decide_route, scan_slop, score, signal, "
             "search_runs, archive_run, buffer_setup, buffer_send, buffer_status, "
@@ -52,7 +52,10 @@ def register(ctx: Any) -> None:
             "management (auth_create, auth_list, auth_revoke, "
             "raft_status, plugin_list, plugin_info) + "
             "debug + config + "
-            "legacy aliases"
+            "legacy aliases.\n\n"
+            "HITL (Human-In-The-Loop): transition action'ı PAUSE state'e geçince "
+            "awaiting_input=True + questions döndürür. Agent bu durumda clarify "
+            "ile kullanıcıya sormalı, sonra resume action'ı ile cevabı iletmelidir."
         ),
         "parameters": {
             "type": "object",
@@ -93,7 +96,8 @@ def register(ctx: Any) -> None:
                 "title": {"type": "string", "description": "Run title (for 'run' action)"},
                 "slug": {"type": "string", "description": "Run slug"},
                 "target_state": {"type": "string", "description": "Target state for transition"},
-                "answers": {"type": "object", "description": "HITL: User answers dict for resume action (e.g. {\"answer\": \"yes\"})"},
+                "answers": {"type": "object", "description": "HITL: User answers dict for resume action (e.g. {\"answer\": \"yes\"}). Resume için kullanılır."},
+                "hitl": {"type": "boolean", "description": "HITL kontrolü yapılsın mı? (default: true). false ise direkt state geçişi yapar, PAUSE kontrolü atlanır.", "default": True},
                 "user_id": {"type": "string", "description": "User ID for approval"},
                 "include_archived": {"type": "boolean", "description": "Include archived runs", "default": False},
                 # Content-specific
@@ -328,17 +332,24 @@ def _handle_slash_status(raw_args: str, ctx: Any) -> str:
 
     if slug:
         msg = f"📊 **{slug}**\n"
-        msg += f"   State: {data.get('state', '?')}\n"
+        msg += f"   State: **{data.get('state', '?')}**\n"
         msg += f"   Profile: {data.get('profile', '?')}\n"
         msg += f"   Süre: {data.get('elapsed', 0)}s\n"
         if data.get("awaiting_input"):
             msg += f"   ⏸️ **Kullanıcı girdisi bekliyor!**\n"
-            for q in data.get("questions", []):
-                choices = f" [{', '.join(q.get('choices', []))}]" if q.get('choices') else ""
-                msg += f"     ❓ {q['question']}{choices}\n"
-            msg += f"   💡 /p-resume {slug} <cevap>\n"
-        if avail := data.get("available_states"):
-            msg += f"   Geçilebilir: {' → '.join(avail)}\n"
+            for i, q in enumerate(data.get("questions", []), 1):
+                choices = ""
+                if q.get('choices'):
+                    choices = "\n       ".join(f"`{c}`" for c in q['choices'])
+                    choices = f"\n       ├─ {choices}"
+                msg += f"\n   **❓ Soru {i}:** {q['question']}"
+                msg += f"\n   Tip: `{q['type']}`"
+                if choices:
+                    msg += f"\n   Seçenekler:{choices}"
+            msg += f"\n\n   💡 `/p-resume {slug} <cevap>`"
+        else:
+            if avail := data.get("available_states"):
+                msg += f"   Geçilebilir: {' → '.join(avail)}\n"
     else:
         msg = "🏭 **Prodinamik Engine**\n"
         msg += f"   Aktif run: {data.get('active_runs', 0)}\n"
@@ -351,7 +362,9 @@ def _handle_slash_resume(raw_args: str, ctx: Any) -> str:
     """/p-resume <slug> <answer>"""
     parts = raw_args.strip().split(maxsplit=1)
     if len(parts) < 2:
-        return "Usage: /p-resume <slug> <answer>\nExample: /p-resume my-run-slug yes"
+        return ("ℹ️ **Kullanım:** `/p-resume <slug> <cevap>`\n"
+                "   Örnek: `/p-resume hitl-test-1 yes`\n"
+                "   Örnek: `/p-resume hitl-test-1 Blog`")
     slug, answer_text = parts[0], parts[1]
 
     # Normalize answer to dict
@@ -360,15 +373,21 @@ def _handle_slash_resume(raw_args: str, ctx: Any) -> str:
     result = _handle_tool({"action": "resume", "slug": slug, "answers": answers}, ctx)
     data = json.loads(result)
     if "error" in data:
-        return f"❌ {data['error']}"
+        return f"❌ Hata: {data['error']}"
+    
     if data.get("status") == "transitioned":
-        return f"✅ `{slug}` devam ediyor: **{data.get('from_state', '?')} → {data.get('to_state', '?')}**"
+        return (f"✅ **{slug}** devam ediyor!\n"
+                f"   {data.get('from_state', '?')} → **{data.get('to_state', '?')}**")
     if data.get("status") == "awaiting_input":
-        return (f"⏸️ `{slug}` yeni bir pause state'te: **{data.get('current_state', '?')}**\n"
-                + "\n".join(f"❓ {q['question']}" for q in data.get("questions", [])))
+        msg = f"⏸️ **{slug}** — yeni bir pause state: **{data.get('current_state', '?')}**\n"
+        for q in data.get("questions", []):
+            msg += f"\n❓ {q['question']}"
+        return msg
     if data.get("status") == "answers_recorded":
-        return f"📝 Cevap kaydedildi: `{slug}`"
-    return f"✅ `{slug}` devam ediyor"
+        return f"📝 **{slug}** — cevabın kaydedildi. Sıradaki adımı sen belirle: `/p-next {slug}`"
+    if data.get("chain_loop_guard"):
+        return f"⚠️ **{slug}** — çok fazla HITL adımı, otomatik devam ediliyor."
+    return f"✅ **{slug}** güncellendi"
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -376,7 +395,7 @@ def _handle_slash_resume(raw_args: str, ctx: Any) -> str:
 # ═══════════════════════════════════════════════════════════════════
 
 def _hook_post_tool(**kw):
-    """Post-tool hook — engine event'lerini Telegram'a push'la."""
+    """Post-tool hook — engine event'lerini Telegram'a push'la + HITL timeout bildirimi."""
     ctx = kw.get("_ctx")
     tool_name = kw.get("tool_name", "")
     args = kw.get("args", {})
@@ -388,14 +407,71 @@ def _hook_post_tool(**kw):
     action = args.get("action", "")
     slug = args.get("slug", "")
 
-    if action not in ("transition", "approve", "reject", "run"):
+    # HITL timeout: engine timeout watcher'dan gelen bildirim
+    hook_type = kw.get("hook_type", "")
+    if hook_type == "on_hitl_timeout":
+        try:
+            state = kw.get("state", "")
+            elapsed = kw.get("elapsed", 0)
+            policy = kw.get("policy", "proceed")
+            reminder = kw.get("reminder", "")
+            
+            hours = int(elapsed // 3600)
+            minutes = int((elapsed % 3600) // 60)
+            
+            msg = (
+                f"⏰ **HITL Timeout**\n"
+                f"   `{slug}` → **{state}**\n"
+                f"   Bekleme: {hours}s {minutes}d\n"
+                f"   Politika: `{policy}`\n"
+            )
+            if reminder:
+                msg += f"   {reminder}\n"
+            
+            if policy == "hold":
+                msg += f"\n   ⏸️ Hâlâ cevap bekliyor..."
+            elif policy == "proceed":
+                msg += f"\n   ➡️ Otomatik devam edildi"
+            elif policy == "abort":
+                msg += f"\n   🛑 İptal edildi"
+            
+            try:
+                from run_agent import AIAgent
+                agent = AIAgent()
+                agent.send_message("telegram", msg)
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return
+
+    if action not in ("transition", "approve", "reject", "run", "resume"):
         return
 
     try:
         data = json.loads(result) if isinstance(result, str) else result
         state = data.get("state", data.get("current_state", ""))
-        emoji = {"run": "🆕", "approve": "✅", "reject": "❌", "transition": "🔔"}
-        msg = f"{emoji.get(action, '🔔')} `{slug}` → **{state}**"
+        
+        # HITL: awaiting_input durumunda özel bildirim
+        if data.get("awaiting_input") or data.get("_hitl"):
+            questions = data.get("questions", [])
+            q_text = "\n".join(
+                f"❓ {q['question']}" 
+                + (f" [`{'`,`'.join(q.get('choices',[]))}`]" if q.get('choices') else "")
+                for q in questions
+            )
+            msg = (
+                f"⏸️ **{slug}** → **{state}**\n"
+                f"   Kullanıcı girdisi bekleniyor:\n"
+                f"{q_text}\n\n"
+                f"   💡 /p-resume {slug} <cevap>"
+            )
+        else:
+            emoji = {
+                "run": "🆕", "approve": "✅", "reject": "❌",
+                "transition": "🔔", "resume": "▶️",
+            }
+            msg = f"{emoji.get(action, '🔔')} `{slug}` → **{state}**"
 
         try:
             from run_agent import AIAgent
