@@ -23,26 +23,9 @@ _engine = None
 
 
 def _get_engine():
-    """Lazy-init Prodinamik Engine instance.
-
-    Also reloads this module's source code to pick up handler changes.
-    """
+    """Lazy-init Prodinamik Engine instance (no self-reload)."""
     global _engine
     if _engine is None:
-        # When called from _reload_engine path, the caller cleared engine sub-modules
-        # but we also need to reload THIS module (hermes_bridge) so new handler functions
-        # are available on the next tool call.
-        try:
-            import sys as _sys
-            mod_name = __name__
-            if mod_name in _sys.modules:
-                import importlib as _il
-                _il.reload(_sys.modules[mod_name])
-                # After reload, the module's _engine is our new engine
-                return _sys.modules[mod_name]._get_engine()
-        except Exception:
-            pass
-
         try:
             import sys
             plugin_root = Path(__file__).parent
@@ -716,21 +699,29 @@ def handle_all(args: Dict[str, Any]) -> Dict[str, Any]:
 
     # ── Special: force-reload engine (hot-reload config changes) ──
     if action == "_reload_engine":
-        global _engine
-        _engine = None
         try:
             import sys as _sys
             import importlib
-            for mod_name in list(_sys.modules.keys()):
-                if mod_name.startswith("engine.") and mod_name != "engine":
-                    _sys.modules.pop(mod_name, None)
-                if mod_name.startswith("profiles.") or mod_name == "profiles":
-                    _sys.modules.pop(mod_name, None)
+
+            mod_name = __name__  # "hermes_bridge"
+
+            # Engine modüllerini temizle
+            for m in list(_sys.modules.keys()):
+                if m.startswith("engine.") and m != "engine":
+                    _sys.modules.pop(m, None)
+                if m.startswith("profiles.") or m == "profiles":
+                    _sys.modules.pop(m, None)
             for key in ["engine.config", "engine.engine", "engine.runtime"]:
                 _sys.modules.pop(key, None)
-            eng = _get_engine()
+
+            # Kendi modülümüzü sys.modules'ten çıkarıp yeniden import et
+            _sys.modules.pop(mod_name, None)
+            _hb = importlib.import_module(mod_name)
+
+            # Yeni modülün engine'ini başlat
+            eng = _hb._get_engine()
             return {
-                "message": "Engine reloaded",
+                "message": "Engine + bridge reloaded",
                 "profiles": list(eng.health_snapshot.get("profiles", [])),
                 "active_runs": eng.health_snapshot.get("active_runs", 0),
                 "health_score": eng.health_snapshot.get("health_score", 0),
