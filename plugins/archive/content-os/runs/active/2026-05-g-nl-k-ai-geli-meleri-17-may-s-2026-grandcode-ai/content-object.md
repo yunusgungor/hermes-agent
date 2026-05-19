@@ -12,4 +12,4 @@
 - **Title:** Günlük AI Gelişmeleri 17 Mayıs 2026 — GrandCode AI Competitive Programming'de Tüm İnsanları Geçti
 
 state: drafting
-updated: 2026-05-19T11:53:57.418628
+updated: 2026-05-19T13:15:04.311624

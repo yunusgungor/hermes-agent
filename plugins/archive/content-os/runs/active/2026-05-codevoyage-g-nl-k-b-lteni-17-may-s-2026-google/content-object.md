@@ -11,4 +11,4 @@
 - **Title:** CodeVoyage Günlük Bülteni • 17 Mayıs 2026 — Google I/O, Anthropic $900B, US-China AI Talks
 
 state: drafting
-updated: 2026-05-19T11:53:57.416661
+updated: 2026-05-19T13:15:04.310142

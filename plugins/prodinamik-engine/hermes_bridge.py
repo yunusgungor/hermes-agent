@@ -272,12 +272,22 @@ def handle_transition(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": "slug and target_state are required"}
     engine = _get_engine()
     try:
+        # Force profile reload if requested (for runtime profile changes)
+        if args.get("force", False):
+            run = engine.get_run(slug)
+            if run and run.meta.profile in engine._profile_cache:
+                del engine._profile_cache[run.meta.profile]
+
         # Capture old state before transition
         old_run = engine.get_run(slug)
         old_state = old_run.meta.state if old_run else "unknown"
-        run = engine._do_transition(slug, target_state)
+        # Support optional runtime_overrides for condition bypass
+        overrides = args.get("runtime_overrides", None)
+        run = engine._do_transition(slug, target_state, runtime_overrides=overrides)
         return {"slug": slug, "state": run.meta.state, "from_state": old_state, "transition": target_state}
     except ValueError as e:
+        return {"error": str(e)}
+    except Exception as e:
         return {"error": str(e)}
 
 

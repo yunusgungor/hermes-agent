@@ -11,4 +11,4 @@
 - **Title:** Günlük AI Gelişmeleri 19 Mayıs 2026 — Google I/O, Anthropic Stainless Acquisition, Recursive Superintelligence
 
 state: brief_ready
-updated: 2026-05-19T11:53:57.424010
+updated: 2026-05-19T13:15:04.316681

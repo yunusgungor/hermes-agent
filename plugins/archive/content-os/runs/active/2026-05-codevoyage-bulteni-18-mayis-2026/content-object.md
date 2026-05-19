@@ -11,4 +11,4 @@
 - **Title:** CodeVoyage Günlük Bülteni • 18 Mayıs 2026 — AI Hafta Değerlendirmesi
 
 state: drafting
-updated: 2026-05-19T11:53:57.422582
+updated: 2026-05-19T13:15:04.314996

@@ -11,4 +11,4 @@
 - **Title:** Flux v1.0 — Yayın ve CI/CD altyapısı: crates.io publish, GitHub Release, GitHub Actions CI/CD pipeline, Docker Hub push
 
 state: brief_ready
-updated: 2026-05-19T11:53:57.420483
+updated: 2026-05-19T13:15:04.313258
