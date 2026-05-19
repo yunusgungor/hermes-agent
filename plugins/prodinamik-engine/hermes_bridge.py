@@ -90,29 +90,47 @@ def _get_engine():
             
             _engine.on_hitl_timeout(_hitl_timeout_notify)
             
+            # ── Warm Agent task'larını HEmen kaydet (sync) ──
+            # Background thread'de start() çağrılmadan önce bile
+            # warm agent task'ları kullanılabilir olsun
+            _engine._agent_coordinator.setup_default_tasks(_engine)
+            
             # ── Background async loop ───────────────────────────
-            # Engine'in timeout watcher + warm agent'ı canlı tutmak için
-            # asyncio loop'u background thread'de başlat
+            # Engine'in timeout watcher + warm agent background task'ları
+            # için asyncio loop'u background thread'de başlat
             _engine_loop = asyncio.new_event_loop()
             
             async def _start_engine():
+                """Start engine and keep loop alive for background tasks"""
                 await _engine.start()
-                # Engine started → keep loop running
-                while True:
-                    await asyncio.sleep(3600)  # Keep alive
+                # Engine.start() creates background tasks (timeout-watcher,
+                # health-checker) that keep the loop busy. We don't need
+                # an infinite loop here — the background tasks keep the
+                # event loop from being idle.
             
             def _run_loop():
+                """Background thread: run event loop with engine's background tasks"""
                 asyncio.set_event_loop(_engine_loop)
                 try:
                     _engine_loop.run_until_complete(_start_engine())
-                except Exception:
-                    pass
+                    logger.info("Prodinamik Engine background loop started")
+                    _engine_loop.run_forever()
+                except asyncio.CancelledError:
+                    logger.info("Prodinamik Engine background loop cancelled")
+                except Exception as e:
+                    logger.error(f"Prodinamik Engine background loop failed: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
             
             _engine_thread = threading.Thread(target=_run_loop, daemon=True, name="prodinamik-engine")
             _engine_thread.start()
             
+            # Wait briefly for engine to initialize
+            import time
+            time.sleep(0.5)
+            
             logger.info(f"Prodinamik Engine initialized with background async loop "
-                        f"(data_dir={cfg.data_dir})")
+                        f"(data_dir={cfg.data_dir}), thread_alive={_engine_thread.is_alive()}")
         except Exception as e:
             logger.error(f"Engine init failed: {e}")
             # Clean up on failure
@@ -508,21 +526,30 @@ def handle_resume(args: Dict[str, Any]) -> Dict[str, Any]:
         is_rejection = any(p in answer_value for p in REJECTION_PATTERNS)
         
         if is_rejection:
-            # Inject runtime_overrides with changes_requested=True
-            # This makes draft_review → drafting transition work
-            run = engine.get_run(slug)
-            if run:
-                profile = engine._get_profile(run.meta.profile)
-                sm = profile.state_machine if profile else None
-                if sm:
-                    current_state = run.meta.state
-                    # Check if rejection path exists from current state
-                    for t in sm._transition_map.get(current_state, []):
-                        if t.condition and "changes_requested" in t.condition:
-                            # Auto-apply changes_requested override
-                            result = engine.resume_run(slug, answers)
-                            if result.get("status") == "answers_recorded" and result.get("answers"):
-                                # Manually transition with override
+            # Try: engine.resume_run already has changes_requested override built in
+            # If it transitions successfully, return the result directly
+            result = engine.resume_run(slug, answers)
+            
+            # Case 1: resume_run successfully transitioned (it has built-in overrides)
+            if result.get("status") == "transitioned":
+                result["rejection_auto_resolved"] = True
+                result["message"] = (
+                    f"Red cevabı algılandı, "
+                    f"{result.get('from_state', '?')} → {result.get('to_state', '?')} "
+                    f"(changes_requested auto-resolved)"
+                )
+                return result
+            
+            # Case 2: resume_run recorded answer but couldn't transition → manual override
+            if result.get("status") == "answers_recorded":
+                run = engine.get_run(slug)
+                if run:
+                    profile = engine._get_profile(run.meta.profile)
+                    sm = profile.state_machine if profile else None
+                    if sm:
+                        current_state = run.meta.state
+                        for t in sm._transition_map.get(current_state, []):
+                            if t.condition and "changes_requested" in t.condition:
                                 next_state = t.to_state
                                 run = engine._do_transition(
                                     slug, next_state,
