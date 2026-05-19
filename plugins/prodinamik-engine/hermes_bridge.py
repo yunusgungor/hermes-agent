@@ -736,14 +736,30 @@ def _handle_search_runs(core, args):
 
 
 def _handle_reload_actions(core, args):
-    """Hot-reload action handlers."""
+    """Hot-reload action handlers + profile cache."""
     try:
         import importlib
         import sys
+
+        # Reload content_os_core (legacy)
         mod = sys.modules.get("content_os_core")
         if mod:
             importlib.reload(mod)
-        return {"message": "Actions reloaded."}
+
+        # Reload profile modules + clear engine cache
+        engine = _get_engine()
+        if engine:
+            # Clear profile cache so next _get_profile re-loads
+            engine._profile_cache.clear()
+            # Remove cached profile modules so they re-import fresh
+            for mod_name in list(sys.modules.keys()):
+                if mod_name.startswith("profiles.") or mod_name == "profiles":
+                    sys.modules.pop(mod_name, None)
+            # Re-discover profiles with fresh imports
+            from engine.runtime import _discover_profiles
+            _discover_profiles()
+
+        return {"message": "Actions + profiles reloaded."}
     except Exception as e:
         return {"error": str(e)}
 
