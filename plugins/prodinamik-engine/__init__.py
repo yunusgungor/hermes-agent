@@ -39,8 +39,8 @@ def register(ctx: Any) -> None:
         "name": "prodinamik",
         "description": (
             "Prodinamik Engine — workflow management. "
-            "45 actions: core (run, list, status, approve, reject, next, "
-            "transition, dashboard, budget) + "
+            "46 actions: core (run, list, status, approve, reject, next, "
+            "transition, resume, dashboard, budget) + "
             "content (setup, audit, decide_route, scan_slop, score, signal, "
             "search_runs, archive_run, buffer_setup, buffer_send, buffer_status, "
             "update_voice, analyze_patterns, get_learnings, reload_actions) + "
@@ -62,7 +62,7 @@ def register(ctx: Any) -> None:
                     "enum": [
                         # Core
                         "run", "list", "status", "approve", "reject",
-                        "next", "transition", "dashboard", "budget",
+                        "next", "transition", "resume", "dashboard", "budget",
                         # Content-OS actions
                         "setup", "audit", "decide_route", "scan_slop", "score",
                         "signal", "search_runs", "archive_run",
@@ -93,6 +93,7 @@ def register(ctx: Any) -> None:
                 "title": {"type": "string", "description": "Run title (for 'run' action)"},
                 "slug": {"type": "string", "description": "Run slug"},
                 "target_state": {"type": "string", "description": "Target state for transition"},
+                "answers": {"type": "object", "description": "HITL: User answers dict for resume action (e.g. {\"answer\": \"yes\"})"},
                 "user_id": {"type": "string", "description": "User ID for approval"},
                 "include_archived": {"type": "boolean", "description": "Include archived runs", "default": False},
                 # Content-specific
@@ -180,6 +181,13 @@ def register(ctx: Any) -> None:
         args_hint="[slug]",
     )
 
+    ctx.register_command(
+        name="/p-resume",
+        handler=lambda raw, **kw: _handle_slash_resume(raw, ctx),
+        description="Resume a paused run with answer. Usage: /p-resume <slug> <yes|no|answer>",
+        args_hint="<slug> <answer>",
+    )
+
     # ══════════════════════════════════════════════════════════════
     # CLI: hermes prodinamik ...
     # ══════════════════════════════════════════════════════════════
@@ -223,7 +231,13 @@ def _handle_tool(args: Dict[str, Any], ctx: Any) -> str:
             for mod_name in list(sys.modules.keys()):
                 if mod_name.startswith("engine.") and mod_name != "engine":
                     sys.modules.pop(mod_name, None)
+                if mod_name.startswith("profiles.") or mod_name == "profiles":
+                    sys.modules.pop(mod_name, None)
             for key in ["engine.config", "engine.engine", "engine.runtime"]:
+                sys.modules.pop(key, None)
+            # Step 3: Clear profile modules too (HITL updates)
+            for key in ["profiles.content", "profiles.software", "profiles.design",
+                        "profiles.research", "profiles.haber", "profiles"]:
                 sys.modules.pop(key, None)
             # Step 3: Reload bridge module so code changes take effect
             bridge_name = hermes_bridge.__name__
@@ -317,6 +331,12 @@ def _handle_slash_status(raw_args: str, ctx: Any) -> str:
         msg += f"   State: {data.get('state', '?')}\n"
         msg += f"   Profile: {data.get('profile', '?')}\n"
         msg += f"   Süre: {data.get('elapsed', 0)}s\n"
+        if data.get("awaiting_input"):
+            msg += f"   ⏸️ **Kullanıcı girdisi bekliyor!**\n"
+            for q in data.get("questions", []):
+                choices = f" [{', '.join(q.get('choices', []))}]" if q.get('choices') else ""
+                msg += f"     ❓ {q['question']}{choices}\n"
+            msg += f"   💡 /p-resume {slug} <cevap>\n"
         if avail := data.get("available_states"):
             msg += f"   Geçilebilir: {' → '.join(avail)}\n"
     else:
@@ -325,6 +345,30 @@ def _handle_slash_status(raw_args: str, ctx: Any) -> str:
         msg += f"   Sağlık: %{data.get('health_score', 0)*100:.0f}\n"
         msg += f"   Profiller: {', '.join(data.get('profiles', []))}\n"
     return msg
+
+
+def _handle_slash_resume(raw_args: str, ctx: Any) -> str:
+    """/p-resume <slug> <answer>"""
+    parts = raw_args.strip().split(maxsplit=1)
+    if len(parts) < 2:
+        return "Usage: /p-resume <slug> <answer>\nExample: /p-resume my-run-slug yes"
+    slug, answer_text = parts[0], parts[1]
+
+    # Normalize answer to dict
+    answers = {"answer": answer_text}
+
+    result = _handle_tool({"action": "resume", "slug": slug, "answers": answers}, ctx)
+    data = json.loads(result)
+    if "error" in data:
+        return f"❌ {data['error']}"
+    if data.get("status") == "transitioned":
+        return f"✅ `{slug}` devam ediyor: **{data.get('from_state', '?')} → {data.get('to_state', '?')}**"
+    if data.get("status") == "awaiting_input":
+        return (f"⏸️ `{slug}` yeni bir pause state'te: **{data.get('current_state', '?')}**\n"
+                + "\n".join(f"❓ {q['question']}" for q in data.get("questions", [])))
+    if data.get("status") == "answers_recorded":
+        return f"📝 Cevap kaydedildi: `{slug}`"
+    return f"✅ `{slug}` devam ediyor"
 
 
 # ═══════════════════════════════════════════════════════════════════

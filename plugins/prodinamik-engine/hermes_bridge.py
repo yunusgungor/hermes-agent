@@ -128,13 +128,32 @@ def handle_status(args: Dict[str, Any]) -> Dict[str, Any]:
 
         available = []
         profile = engine._get_profile(run.meta.profile)
-        if profile and profile.state_machine:
-            next_states = profile.state_machine.get_next_states(run.meta.state)
+        sm = profile.state_machine if profile else None
+        if sm:
+            next_states = sm.get_next_states(run.meta.state)
             for s in next_states:
-                can, reason = profile.state_machine.can_transition(
+                can, reason = sm.can_transition(
                     run.meta.state, s
                 )
                 available.append(s if can else f"{s} ({reason})")
+
+        # HITL kontrolü — pause state'te mi?
+        awaiting_input = False
+        questions = []
+        if sm and sm.is_pause_state(run.meta.state):
+            from engine.state_machine import RuntimeState
+            rt = RuntimeState(current_state=run.meta.state)
+            hitl_qs = sm.get_hitl_questions(run.meta.state, rt)
+            if hitl_qs:
+                awaiting_input = True
+                questions = [
+                    {
+                        "question": q["question"],
+                        "type": q["type"],
+                        "choices": q.get("choices", []),
+                    }
+                    for q in hitl_qs
+                ]
 
         return {
             "slug": run.meta.slug,
@@ -143,6 +162,8 @@ def handle_status(args: Dict[str, Any]) -> Dict[str, Any]:
             "title": run.meta.title,
             "status": run.meta.status,
             "elapsed": elapsed,
+            "awaiting_input": awaiting_input,
+            "questions": questions,
             "available_states": [s for s in available if not s.startswith("(")],
         }
     else:
@@ -288,6 +309,31 @@ def handle_transition(args: Dict[str, Any]) -> Dict[str, Any]:
     except ValueError as e:
         return {"error": str(e)}
     except Exception as e:
+        return {"error": str(e)}
+
+
+def handle_resume(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Resume a paused run with user answers (HITL).
+
+    HITL: Kullanıcı cevaplarını engine'e iletir.
+    Engine resume_transitions mapping'ine bakar ve uygun state'e geçer.
+
+    Required:
+      - slug: Run slug
+      - answers: dict of user answers (e.g. {"answer": "yes"})
+    """
+    slug = args.get("slug", "")
+    answers = args.get("answers", {})
+    if not slug:
+        return {"error": "slug is required"}
+    if not answers:
+        return {"error": "answers is required"}
+
+    engine = _get_engine()
+    try:
+        result = engine.resume_run(slug, answers)
+        return result
+    except ValueError as e:
         return {"error": str(e)}
 
 
@@ -761,6 +807,7 @@ def handle_all(args: Dict[str, Any]) -> Dict[str, Any]:
         "reject": handle_reject,
         "next": handle_next,
         "transition": handle_transition,
+        "resume": handle_resume,
         "dashboard": handle_dashboard,
         "budget": handle_budget,
     }
