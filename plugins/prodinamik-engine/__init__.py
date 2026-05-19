@@ -102,6 +102,7 @@ def register(ctx: Any) -> None:
                 "target_state": {"type": "string", "description": "Target state for transition"},
                 "answers": {"type": "object", "description": "HITL: User answers dict for resume action (e.g. {\"answer\": \"yes\"}). Resume için kullanılır."},
                 "hitl": {"type": "boolean", "description": "HITL kontrolü yapılsın mı? (default: true). false ise direkt state geçişi yapar, PAUSE kontrolü atlanır.", "default": True},
+                "runtime_overrides": {"type": "object", "description": "Condition engine override'lari. Orn: {\"changes_requested\": true} ile rejection loop tetiklenir."},
                 "user_id": {"type": "string", "description": "User ID for approval"},
                 "include_archived": {"type": "boolean", "description": "Include archived runs", "default": False},
                 # Content-specific

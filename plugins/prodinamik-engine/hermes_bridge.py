@@ -20,14 +20,24 @@ logger = logging.getLogger(__name__)
 
 # Lazy engine singleton
 _engine = None
+_engine_loop = None
+_engine_thread = None
 
 
 def _get_engine():
-    """Lazy-init Prodinamik Engine instance (no self-reload)."""
-    global _engine
+    """Lazy-init Prodinamik Engine instance with background async loop.
+    
+    Engine'i bir background thread'de asyncio loop ile başlatır, böylece:
+      - Timeout Watcher v2 (PAUSE timeout kontrolleri) canlı çalışır
+      - Warm Agent Coordinator (periyodik task'lar) canlı çalışır
+      - sync tool çağrıları (create_run, _do_transition, etc.) thread-safe çalışır
+    """
+    global _engine, _engine_loop, _engine_thread
     if _engine is None:
         try:
             import sys
+            import asyncio
+            import threading
             plugin_root = Path(__file__).parent
             if str(plugin_root) not in sys.path:
                 sys.path.insert(0, str(plugin_root))
@@ -80,9 +90,35 @@ def _get_engine():
             
             _engine.on_hitl_timeout(_hitl_timeout_notify)
             
-            logger.info(f"Prodinamik Engine initialized (data_dir={cfg.data_dir})")
+            # ── Background async loop ───────────────────────────
+            # Engine'in timeout watcher + warm agent'ı canlı tutmak için
+            # asyncio loop'u background thread'de başlat
+            _engine_loop = asyncio.new_event_loop()
+            
+            async def _start_engine():
+                await _engine.start()
+                # Engine started → keep loop running
+                while True:
+                    await asyncio.sleep(3600)  # Keep alive
+            
+            def _run_loop():
+                asyncio.set_event_loop(_engine_loop)
+                try:
+                    _engine_loop.run_until_complete(_start_engine())
+                except Exception:
+                    pass
+            
+            _engine_thread = threading.Thread(target=_run_loop, daemon=True, name="prodinamik-engine")
+            _engine_thread.start()
+            
+            logger.info(f"Prodinamik Engine initialized with background async loop "
+                        f"(data_dir={cfg.data_dir})")
         except Exception as e:
             logger.error(f"Engine init failed: {e}")
+            # Clean up on failure
+            if _engine_loop:
+                _engine_loop.close()
+            _engine = None
             raise
     return _engine
 
@@ -333,11 +369,29 @@ def handle_transition(args: Dict[str, Any]) -> Dict[str, Any]:
     awaiting_input=True + questions döndürür.
     
     Agent bu response'u görünce OTOMATİK clarify kullanmalıdır.
+    
+    NEW: runtime_overrides parametresi ile condition engine override edilebilir.
+    Örn: runtime_overrides={"changes_requested": True} ile rejection loop tetiklenir.
+    
+    NEW: HITL rejection mantığı — resume sırasında kullanıcı "no"/"hayır"/"red"
+    cevabı verirse otomatik olarak changes_requested=True ile rejection rotasına
+    yönlendirilir.
     """
     slug = args.get("slug", "")
     target_state = args.get("target_state", "")
     if not slug or not target_state:
         return {"error": "slug and target_state are required"}
+    
+    # runtime_overrides: condition engine'i bypass etmek için
+    # Kullanıcı tarafından gönderilebilir (ör: {"changes_requested": True})
+    runtime_overrides = args.get("runtime_overrides", None)
+    if runtime_overrides is not None and not isinstance(runtime_overrides, dict):
+        try:
+            import json
+            runtime_overrides = json.loads(runtime_overrides)
+        except (json.JSONDecodeError, TypeError):
+            runtime_overrides = None
+    
     engine = _get_engine()
     try:
         # Force profile reload if requested (for runtime profile changes)
@@ -351,16 +405,19 @@ def handle_transition(args: Dict[str, Any]) -> Dict[str, Any]:
         old_state = old_run.meta.state if old_run else "unknown"
         
         # Use transition_with_hitl for HITL-aware transitions
-        # Fallback: if user passes direct target_state without HITL context,
-        # use _do_transition for backward compatibility
         hitl_check = args.get("hitl", True)  # Default: check HITL
         
         if hitl_check:
             result = engine.transition_with_hitl(slug, target_state)
             if not result.get("success"):
-                # If transition_with_hitl fails, try _do_transition as fallback
-                run = engine._do_transition(slug, target_state)
+                # If transition_with_hitl fails, try _do_transition with overrides
+                kwargs = {}
+                if runtime_overrides:
+                    kwargs["runtime_overrides"] = runtime_overrides
+                run = engine._do_transition(slug, target_state, **kwargs)
                 base = {"slug": slug, "state": run.meta.state, "from_state": old_state, "transition": target_state}
+                if runtime_overrides:
+                    base["runtime_overrides"] = runtime_overrides
                 # Check if new state is a PAUSE state
                 profile = engine._get_profile(run.meta.profile)
                 sm = profile.state_machine if profile else None
@@ -396,8 +453,14 @@ def handle_transition(args: Dict[str, Any]) -> Dict[str, Any]:
             return {"slug": slug, "state": result["current_state"], "from_state": old_state, "transition": target_state}
         else:
             # Legacy mode: no HITL checking
-            run = engine._do_transition(slug, target_state)
-            return {"slug": slug, "state": run.meta.state, "from_state": old_state, "transition": target_state}
+            kwargs = {}
+            if runtime_overrides:
+                kwargs["runtime_overrides"] = runtime_overrides
+            run = engine._do_transition(slug, target_state, **kwargs)
+            result = {"slug": slug, "state": run.meta.state, "from_state": old_state, "transition": target_state}
+            if runtime_overrides:
+                result["runtime_overrides"] = runtime_overrides
+            return result
             
     except ValueError as e:
         return {"error": str(e)}
@@ -410,6 +473,12 @@ def handle_resume(args: Dict[str, Any]) -> Dict[str, Any]:
 
     HITL: Kullanıcı cevaplarını engine'e iletir.
     Engine resume_transitions mapping'ine bakar ve uygun state'e geçer.
+
+    NEW (HITL Rejection Logic):
+    Kullanıcı cevabı "no", "hayır", "red" (veya türevleri) ise,
+    otomatik olarak runtime_overrides={"changes_requested": True} ile
+    engine'e iletilir. Böylece draft_review → drafting gibi rejection
+    rotaları çalışır.
 
     Required:
       - slug: Run slug
@@ -424,6 +493,50 @@ def handle_resume(args: Dict[str, Any]) -> Dict[str, Any]:
 
     engine = _get_engine()
     try:
+        # ── HITL Rejection Logic ──
+        # Detect rejection answers and auto-set changes_requested
+        answer_value = ""
+        if isinstance(answers, dict):
+            answer_value = str(list(answers.values())[0]).lower().strip() if answers else ""
+        elif isinstance(answers, str):
+            answer_value = answers.lower().strip()
+        
+        REJECTION_PATTERNS = ("no", "hayır", "hayir", "red", "yok", "iptal",
+                              "düzelt", "duzelt", "revise", "changes",
+                              "olmaz", "degistir", "değiştir")
+        
+        is_rejection = any(p in answer_value for p in REJECTION_PATTERNS)
+        
+        if is_rejection:
+            # Inject runtime_overrides with changes_requested=True
+            # This makes draft_review → drafting transition work
+            run = engine.get_run(slug)
+            if run:
+                profile = engine._get_profile(run.meta.profile)
+                sm = profile.state_machine if profile else None
+                if sm:
+                    current_state = run.meta.state
+                    # Check if rejection path exists from current state
+                    for t in sm._transition_map.get(current_state, []):
+                        if t.condition and "changes_requested" in t.condition:
+                            # Auto-apply changes_requested override
+                            result = engine.resume_run(slug, answers)
+                            if result.get("status") == "answers_recorded" and result.get("answers"):
+                                # Manually transition with override
+                                next_state = t.to_state
+                                run = engine._do_transition(
+                                    slug, next_state,
+                                    runtime_overrides={"changes_requested": True}
+                                )
+                                return {
+                                    "status": "transitioned",
+                                    "run_slug": slug,
+                                    "from_state": current_state,
+                                    "to_state": next_state,
+                                    "rejection_auto_resolved": True,
+                                    "message": f"Red cevabı algılandı, {current_state} → {next_state} (changes_requested=True)",
+                                }
+        
         result = engine.resume_run(slug, answers)
         return result
     except ValueError as e:
