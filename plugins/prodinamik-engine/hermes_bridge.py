@@ -23,9 +23,26 @@ _engine = None
 
 
 def _get_engine():
-    """Lazy-init Prodinamik Engine instance."""
+    """Lazy-init Prodinamik Engine instance.
+
+    Also reloads this module's source code to pick up handler changes.
+    """
     global _engine
     if _engine is None:
+        # When called from _reload_engine path, the caller cleared engine sub-modules
+        # but we also need to reload THIS module (hermes_bridge) so new handler functions
+        # are available on the next tool call.
+        try:
+            import sys as _sys
+            mod_name = __name__
+            if mod_name in _sys.modules:
+                import importlib as _il
+                _il.reload(_sys.modules[mod_name])
+                # After reload, the module's _engine is our new engine
+                return _sys.modules[mod_name]._get_engine()
+        except Exception:
+            pass
+
         try:
             import sys
             plugin_root = Path(__file__).parent
@@ -722,7 +739,632 @@ def handle_all(args: Dict[str, Any]) -> Dict[str, Any]:
         result = handler(args)
         return result
 
+    # ── AI feature: drift detection ──
+    if action == "ai_detect":
+        return _handle_ai_detect(args)
+
+    # ── AI feature: degradation forecast ──
+    if action == "ai_predict":
+        return _handle_ai_predict(args)
+
+    # ── AI feature: run recommendation ──
+    if action == "ai_recommend":
+        return _handle_ai_recommend(args)
+
+    # ── AI feature: AI status overview ──
+    if action == "ai_status":
+        return _handle_ai_status(args)
+
+    # ── Audit: query audit log ──
+    if action == "audit_query":
+        return _handle_audit_query(args)
+
+    # ── Metrics: engine metrics export ──
+    if action == "metrics":
+        return _handle_metrics(args)
+
+    # ── Alert: send alert to configured channels ──
+    if action == "alert_send":
+        return _handle_alert_send(args)
+
+    # ── Auth: API key management ──
+    if action == "auth_create":
+        return _handle_auth_create(args)
+    if action == "auth_list":
+        return _handle_auth_list(args)
+    if action == "auth_revoke":
+        return _handle_auth_revoke(args)
+
+    # ── Raft: cluster status ──
+    if action == "raft_status":
+        return _handle_raft_status(args)
+
+    # ── Plugin: engine plugin management ──
+    if action == "plugin_list":
+        return _handle_plugin_list(args)
+    if action == "plugin_info":
+        return _handle_plugin_info(args)
+
+    # ── Debug: run timeline/debug view ──
+    if action == "debug":
+        return _handle_debug(args)
+
+    # ── Config: engine configuration ──
+    if action == "config":
+        return _handle_config(args)
+
     return {"error": f"Unknown action: {action}"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# AI FEATURE HANDLERS
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _get_ai_detector(engine):
+    """Lazy-init AIDriftDetector from engine."""
+    try:
+        from engine.aidetect import AIDriftDetector, DriftType, DriftSeverity
+        if not hasattr(engine, '_ai_detector') or engine._ai_detector is None:
+            engine._ai_detector = AIDriftDetector()
+            # Seed with engine's run data for analysis
+            for run in engine.list_runs():
+                engine._ai_detector.record_drift(
+                    drift_id=f"seed-{run.slug}",
+                    drift_type=DriftType.STATE_TRANSITION,
+                    severity=DriftSeverity.LOW,
+                    run_id=run.slug,
+                    state=run.state,
+                    description=f"Run {run.slug} in state {run.state}",
+                )
+        return engine._ai_detector
+    except Exception as e:
+        logger.debug(f"AIDriftDetector not available: {e}")
+        return None
+
+
+def _get_forecaster(engine):
+    """Lazy-init AIDegradationForecaster from engine."""
+    try:
+        from engine.predict import AIDegradationForecaster
+        if not hasattr(engine, '_forecaster') or engine._forecaster is None:
+            engine._forecaster = AIDegradationForecaster()
+        return engine._forecaster
+    except Exception as e:
+        logger.debug(f"AIDegradationForecaster not available: {e}")
+        return None
+
+
+def _get_recommender(engine):
+    """Lazy-init AIRecommender from engine."""
+    try:
+        from engine.recommend import AIRecommender
+        if not hasattr(engine, '_recommender') or engine._recommender is None:
+            engine._recommender = AIRecommender()
+        return engine._recommender
+    except Exception as e:
+        logger.debug(f"AIRecommender not available: {e}")
+        return None
+
+
+def _handle_ai_detect(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Detect drift patterns and emergence candidates."""
+    engine = _get_engine()
+    detector = _get_ai_detector(engine)
+    if not detector:
+        return {"error": "AI drift detector not available", "health_score": 100, "total_events": 0}
+
+    json_output = args.get("format", "") == "json"
+    report = detector.generate_report()
+
+    # Remove LLM analysis for compact output unless requested
+    if not args.get("verbose", False):
+        report.pop("ai_analysis", None)
+
+    report["status"] = "ok"
+    return report
+
+
+def _handle_ai_predict(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Predict degradation across engine metrics."""
+    engine = _get_engine()
+    forecaster = _get_forecaster(engine)
+    if not forecaster:
+        return {"error": "Degradation forecaster not available"}
+
+    horizon = args.get("horizon", 60)
+    metric = args.get("metric", "")
+
+    if metric:
+        result = forecaster.predict(metric, horizon)
+        if not result:
+            return {"error": f"Metric '{metric}' not tracked"}
+        return {"predictions": {metric: result.to_dict()}, "metric": metric}
+    else:
+        predictions = forecaster.predict_all(horizon)
+        report = forecaster.generate_report(horizon)
+        report["status"] = "ok"
+        return report
+
+
+def _handle_ai_recommend(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Get AI-driven run recommendations."""
+    engine = _get_engine()
+    recommender = _get_recommender(engine)
+    if not recommender:
+        return {"error": "AI recommender not available"}
+
+    from_state = args.get("from_state", "")
+    profile = args.get("profile", "")
+    slug = args.get("slug", "")
+
+    if slug:
+        # Get recommendation for a specific run
+        run = engine.get_run(slug)
+        if not run:
+            return {"error": f"Run '{slug}' not found"}
+        rec = recommender.get_recommendation(slug, run.meta.state, run.meta.profile)
+        if not rec:
+            return {"slug": slug, "recommendation": None, "note": "Insufficient data for recommendation"}
+        return {
+            "slug": slug,
+            "current_state": rec.current_state,
+            "best_next_state": rec.best_next_state,
+            "confidence": round(rec.confidence, 3),
+            "estimated_duration": rec.estimated_duration,
+            "warnings": rec.warnings,
+            "reasoning": rec.reasoning,
+        }
+    elif from_state:
+        # Get transition stats for a state
+        stats = recommender.get_transition_stats(from_state, profile)
+        return {
+            "from_state": from_state,
+            "profile": profile or "all",
+            "transitions": {k: v.to_dict() for k, v in stats.items()},
+        }
+    else:
+        # Overview report
+        report = recommender.generate_report()
+        report["status"] = "ok"
+        return report
+
+
+def _handle_ai_status(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Get all AI module metrics at a glance."""
+    engine = _get_engine()
+
+    detector = _get_ai_detector(engine)
+    forecaster = _get_forecaster(engine)
+    recommender = _get_recommender(engine)
+
+    return {
+        "drift_detector": {
+            "available": detector is not None,
+            "metrics": detector.metrics if detector else {},
+        },
+        "degradation_forecaster": {
+            "available": forecaster is not None,
+            "metrics": forecaster.metrics if forecaster else {},
+        },
+        "run_recommender": {
+            "available": recommender is not None,
+            "metrics": recommender.metrics if recommender else {},
+        },
+        "engine": {
+            "profiles": list(engine._profile_cache.keys()),
+            "active_runs": engine.health_snapshot.get("active_runs", 0),
+            "health_score": engine.health_snapshot.get("health_score", 0),
+        },
+        "status": "ok",
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# AUDIT LOG HANDLER
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _handle_audit_query(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Query engine audit log."""
+    engine = _get_engine()
+    try:
+        from engine.audit import AuditLog
+        audit_path = Path(engine.config.data_dir) / "audit"
+        audit_path.mkdir(parents=True, exist_ok=True)
+        audit = AuditLog(str(audit_path))
+    except Exception as e:
+        return {"error": f"Audit log init failed: {e}"}
+
+    since = args.get("since", "")
+    until = args.get("until", "")
+    event_type = args.get("type", "")
+    limit = args.get("limit", 50)
+
+    try:
+        kwargs = {"since": since, "until": until, "limit": limit}
+        if event_type:
+            kwargs["event_type"] = event_type
+        entries = list(audit.query(**kwargs))
+        return {
+            "count": len(entries),
+            "entries": [e.to_dict() for e in entries],
+            "stats": audit.stats(),
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# METRICS EXPORT HANDLER
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _handle_metrics(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Get engine metrics in structured or Prometheus format."""
+    engine = _get_engine()
+
+    prometheus = args.get("format", "") == "prometheus"
+    health = engine.health_snapshot
+
+    metrics_data = {
+        "engine": {
+            "health_score": health.get("health_score", 0),
+            "active_runs": health.get("active_runs", 0),
+            "total_cost": health.get("total_cost", 0),
+            "profile_count": len(health.get("profiles", list(engine._profile_cache.keys()))),
+        },
+        "run_counts": {
+            slug: run.state for slug, run in engine._run_cache.items()
+        } if hasattr(engine, '_run_cache') else {},
+        "degradation": health.get("degradation_level", "full"),
+    }
+
+    if prometheus:
+        lines = [
+            f'# HELP prodinamik_health_score Engine health score (0-1)',
+            f'# TYPE prodinamik_health_score gauge',
+            f'prodinamik_health_score {metrics_data["engine"]["health_score"]}',
+            f'# HELP prodinamik_active_runs Number of active runs',
+            f'# TYPE prodinamik_active_runs gauge',
+            f'prodinamik_active_runs {metrics_data["engine"]["active_runs"]}',
+            f'# HELP prodinamik_total_cost Total engine cost in USD',
+            f'# TYPE prodinamik_total_cost gauge',
+            f'prodinamik_total_cost {metrics_data["engine"]["total_cost"]}',
+        ]
+        metrics_data["prometheus"] = "\n".join(lines)
+
+    metrics_data["status"] = "ok"
+    return metrics_data
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ALERT HANDLER
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _handle_alert_send(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Send an alert to configured channels."""
+    level = args.get("level", "info")
+    title = args.get("title", "")
+    message = args.get("message", "")
+    metric_name = args.get("metric", "")
+    metric_value = args.get("value", 0)
+
+    if not title:
+        return {"error": "title is required"}
+
+    if level not in ("info", "warning", "critical"):
+        return {"error": f"Invalid level: {level}. Use: info, warning, critical"}
+
+    try:
+        from engine.alert import AlertManager, alert_config_from_env
+        mgr = alert_config_from_env()
+
+        metrics = {}
+        if metric_name:
+            metrics[metric_name] = metric_value
+
+        alert = mgr.send_alert(level, title, message, metrics)
+        return {
+            "alert_id": alert.id,
+            "level": alert.level,
+            "title": alert.title,
+            "channels": mgr.enabled_channels,
+            "configured": mgr.is_configured,
+            "status": "sent" if mgr.is_configured else "config_only",
+            "note": "No channels configured" if not mgr.is_configured else "",
+        }
+    except Exception as e:
+        return {"error": str(e), "status": "failed"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# AUTH HANDLERS (Phase 2)
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _get_auth_manager(engine) -> object:
+    """Lazy-init AuthManager from engine config path."""
+    try:
+        from engine.auth import AuthManager
+        auth_path = Path(engine.config.data_dir) / "auth"
+        auth_path.mkdir(parents=True, exist_ok=True)
+        return AuthManager(str(auth_path))
+    except Exception as e:
+        logger.debug(f"AuthManager init failed: {e}")
+        return None
+
+
+def _handle_auth_create(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a new API key."""
+    engine = _get_engine()
+    mgr = _get_auth_manager(engine)
+    if not mgr:
+        return {"error": "AuthManager not available"}
+
+    name = args.get("name", "")
+    role = args.get("role", "user")
+    expires_in_days = args.get("expires_in_days", None)
+
+    if not name:
+        return {"error": "name is required"}
+
+    if role not in ("admin", "user", "readonly"):
+        return {"error": "Invalid role. Use: admin, user, readonly"}
+
+    try:
+        key_id, raw_key = mgr.create_key(name, role, expires_in_days)
+        return {
+            "key_id": key_id,
+            "raw_key": raw_key,
+            "name": name,
+            "role": role,
+            "note": "Save the raw_key — it is shown only once!",
+            "status": "ok",
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _handle_auth_list(args: Dict[str, Any]) -> Dict[str, Any]:
+    """List all API keys (without secrets)."""
+    engine = _get_engine()
+    mgr = _get_auth_manager(engine)
+    if not mgr:
+        return {"error": "AuthManager not available"}
+
+    try:
+        keys = mgr.list_keys()
+        return {
+            "keys": keys,
+            "count": len(keys),
+            "status": "ok",
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _handle_auth_revoke(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Revoke an API key."""
+    engine = _get_engine()
+    mgr = _get_auth_manager(engine)
+    if not mgr:
+        return {"error": "AuthManager not available"}
+
+    key_id = args.get("key_id", "")
+    if not key_id:
+        return {"error": "key_id is required"}
+
+    try:
+        result = mgr.revoke_key(key_id)
+        return {
+            "key_id": key_id,
+            "revoked": result,
+            "status": "ok" if result else "not_found",
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# RAFT HANDLER (Phase 2)
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _handle_raft_status(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Show Raft cluster status."""
+    engine = _get_engine()
+    try:
+        from engine.raft_consensus import HybridConsensusNode
+        from engine.raft_cluster import RaftCluster
+    except ImportError:
+        return {"error": "Raft modules not available"}
+
+    # Check if engine has a Raft node configured
+    raft_node = getattr(engine, 'raft_node', None)
+    if raft_node is None:
+        return {
+            "configured": False,
+            "message": "No Raft node configured. Engine running in standalone mode.",
+            "status": "standalone",
+        }
+
+    try:
+        cluster = RaftCluster(raft_node)
+        report = cluster.health_report()
+        return {
+            "configured": True,
+            "cluster_size": report.get("cluster_size", 1),
+            "local_role": report.get("local_role", "unknown"),
+            "leader": report.get("leader", "standalone"),
+            "healthy_nodes": report.get("healthy_nodes", 0),
+            "status": "ok",
+            "raw_report": report,
+        }
+    except Exception as e:
+        return {"error": str(e), "configured": True}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# PLUGIN HANDLERS (Phase 2)
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _get_plugin_registry(engine) -> object:
+    """Lazy-init PluginRegistry from engine."""
+    try:
+        from engine.plugin_registry import PluginRegistry
+        return PluginRegistry(engine)
+    except Exception as e:
+        logger.debug(f"PluginRegistry init failed: {e}")
+        return None
+
+
+def _handle_plugin_list(args: Dict[str, Any]) -> Dict[str, Any]:
+    """List all registered engine plugins."""
+    engine = _get_engine()
+    reg = _get_plugin_registry(engine)
+    if not reg:
+        return {"error": "PluginRegistry not available"}
+
+    try:
+        plugins = reg.list_plugins()
+        enabled = reg.get_enabled()
+        return {
+            "plugins": [
+                {
+                    "id": p.id,
+                    "name": p.manifest.name if hasattr(p, 'manifest') else p.id,
+                    "version": p.manifest.version if hasattr(p, 'manifest') else "?",
+                    "type": p.plugin_type.value if hasattr(p, 'plugin_type') else "?",
+                    "enabled": p.id in enabled,
+                }
+                for p in plugins
+            ],
+            "total": len(plugins),
+            "enabled_count": len(enabled),
+            "status": "ok",
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _handle_plugin_info(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Show details of a specific plugin."""
+    engine = _get_engine()
+    reg = _get_plugin_registry(engine)
+    if not reg:
+        return {"error": "PluginRegistry not available"}
+
+    plugin_id = args.get("plugin_id", "")
+    if not plugin_id:
+        return {"error": "plugin_id is required"}
+
+    try:
+        plugin = reg.get(plugin_id)
+        if not plugin:
+            return {"error": f"Plugin '{plugin_id}' not found"}
+
+        info = {"id": plugin.id, "type": "unknown", "enabled": False}
+        if hasattr(plugin, 'manifest'):
+            m = plugin.manifest
+            info.update({
+                "name": m.name, "version": m.version,
+                "description": m.description, "author": m.author,
+            })
+        if hasattr(plugin, 'plugin_type'):
+            info["type"] = plugin.plugin_type.value
+        if hasattr(plugin, 'state'):
+            info["state"] = plugin.state.value if hasattr(plugin.state, 'value') else str(plugin.state)
+        if hasattr(plugin, 'tools'):
+            info["tools"] = [t.name for t in plugin.tools] if plugin.tools else []
+        info["enabled"] = plugin.id in reg.get_enabled()
+        info["status"] = "ok"
+        return info
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# DEBUG + CONFIG HANDLERS (Phase 3)
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _get_debug_cli(engine: Any) -> object:
+    """Create DebugCLI from engine components."""
+    try:
+        from engine.debug_cli import DebugCLI
+        return DebugCLI(
+            run_manager=getattr(engine, 'run_manager', None),
+            event_store=getattr(engine, 'event_store', None),
+            cost_tracker=getattr(engine, 'cost_tracker', None),
+            degradation_manager=getattr(engine, 'degradation_manager', None),
+            budget_enforcer=getattr(engine, 'budget', None),
+        )
+    except Exception as e:
+        logger.debug(f"DebugCLI init failed: {e}")
+        return None
+
+
+def _handle_debug(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Run debug commands on a specific run."""
+    slug = args.get("slug", "")
+    command = args.get("command", "summary")
+
+    engine = _get_engine()
+    run = engine.get_run(slug) if slug else None
+    if slug and not run:
+        return {"error": f"Run '{slug}' not found"}
+
+    # Without slug, show engine-level health
+    if not slug:
+        health = engine.health_snapshot
+        return {
+            "slug": None,
+            "command": "health",
+            "output": {
+                "health_score": health.get("health_score", 0),
+                "active_runs": health.get("active_runs", 0),
+                "total_cost": health.get("total_cost", 0),
+                "profiles": health.get("profiles", []),
+                "degradation": health.get("degradation_level", "full"),
+            },
+            "status": "ok",
+        }
+
+    cli = _get_debug_cli(engine)
+    if not cli:
+        return {"error": "DebugCLI not available"}
+
+    try:
+        # Run debug command via DebugCLI
+        text_output = cli.handle(command, slug)
+        return {
+            "slug": slug,
+            "command": command,
+            "output": text_output,
+            "status": "ok",
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _handle_config(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Show engine configuration."""
+    engine = _get_engine()
+    try:
+        cfg = engine.config
+        if hasattr(cfg, 'to_dict'):
+            config_dict = cfg.to_dict()
+        else:
+            import dataclasses
+            config_dict = dataclasses.asdict(cfg)
+
+        config_dict["status"] = "ok"
+        return config_dict
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -39,14 +39,20 @@ def register(ctx: Any) -> None:
         "name": "prodinamik",
         "description": (
             "Prodinamik Engine — workflow management. "
-            "34 actions: core (run, list, status, approve, reject, next, "
+            "45 actions: core (run, list, status, approve, reject, next, "
             "transition, dashboard, budget) + "
             "content (setup, audit, decide_route, scan_slop, score, signal, "
             "search_runs, archive_run, buffer_setup, buffer_send, buffer_status, "
             "update_voice, analyze_patterns, get_learnings, reload_actions) + "
             "haber (fetch_news, verify_news, publish_verified, cross_verify_story, "
             "search_news, auto_publish, hallucination_check, issue_correction, "
-            "check_correction, sources) + Content-OS & Haber legacy aliases"
+            "check_correction, sources) + "
+            "AI (ai_detect, ai_predict, ai_recommend, ai_status) + "
+            "observability (audit_query, metrics, alert_send) + "
+            "management (auth_create, auth_list, auth_revoke, "
+            "raft_status, plugin_list, plugin_info) + "
+            "debug + config + "
+            "legacy aliases"
         ),
         "parameters": {
             "type": "object",
@@ -68,11 +74,20 @@ def register(ctx: Any) -> None:
                         "cross_verify_story", "search_news", "auto_publish",
                         "hallucination_check", "issue_correction",
                         "check_correction", "sources",
+                        # AI features (NEW — Phase 1)
+                        "ai_detect", "ai_predict", "ai_recommend", "ai_status",
+                        # Observability (NEW — Phase 1)
+                        "audit_query", "metrics", "alert_send",
+                        # Management (NEW — Phase 2)
+                        "auth_create", "auth_list", "auth_revoke",
+                        "raft_status", "plugin_list", "plugin_info",
+                        # Debug + Config (NEW — Phase 3)
+                        "debug", "config",
                         # Legacy alias
                         "new_run", "get_state", "get_all_runs",
                         "update_state", "get_next_actions",
                     ],
-                    "description": "Action to perform in the pipeline (core + content + haber)",
+                    "description": "Action to perform (core + content + haber + ai + observability)",
                 },
                 "profile": {"type": "string", "description": "Profile name: software, content, haber, research, design"},
                 "title": {"type": "string", "description": "Run title (for 'run' action)"},
@@ -101,6 +116,24 @@ def register(ctx: Any) -> None:
                 "error_description": {"type": "string", "description": "Error description for issue_correction"},
                 "correct_information": {"type": "string", "description": "Correct information for issue_correction"},
                 "retract": {"type": "boolean", "description": "Retract the story entirely (vs correction)", "default": False},
+                # AI feature params (NEW)
+                "verbose": {"type": "boolean", "description": "Verbose output (include AI analysis text)", "default": False},
+                "horizon": {"type": "integer", "description": "Forecast horizon in minutes (default: 60)"},
+                "metric": {"type": "string", "description": "Single metric name to filter (predict/metrics)"},
+                "from_state": {"type": "string", "description": "Source state for recommendation"},
+                # Observability params (NEW)
+                "since": {"type": "string", "description": "Audit query start time (ISO format)"},
+                "until": {"type": "string", "description": "Audit query end time (ISO format)"},
+                "level": {"type": "string", "description": "Alert level: info, warning, critical"},
+                "message": {"type": "string", "description": "Alert message text"},
+                "value": {"type": "number", "description": "Numeric value for metric/alert"},
+                # Management params (NEW — Phase 2)
+                "role": {"type": "string", "description": "Role for auth create: admin, user, readonly"},
+                "key_id": {"type": "string", "description": "API key ID for auth_revoke"},
+                "plugin_id": {"type": "string", "description": "Plugin ID for plugin_info"},
+                "expires_in_days": {"type": "integer", "description": "API key expiry in days (auth_create)"},
+                # Debug params (NEW — Phase 3)
+                "command": {"type": "string", "description": "Debug command: timeline, event, state, why, cost, health, budget, summary (default)"},
             },
             "required": ["action"],
         },
@@ -111,7 +144,7 @@ def register(ctx: Any) -> None:
         toolset="prodinamik",
         schema=tool_schema,
         handler=lambda args, **kw: _handle_tool(args, ctx),
-        description="Prodinamik Engine: 26 actions — run pipelines, manage content workflow",
+        description="Prodinamik Engine: 45 actions — run pipelines, AI, observability, management, debug",
         is_async=False,
     )
 
@@ -180,26 +213,27 @@ def _handle_tool(args: Dict[str, Any], ctx: Any) -> str:
 
     action = args.get("action", "")
 
-    # Special: force-reload engine (clear singleton cache)
+    # Special: force-reload engine (clear singleton cache + reload bridge)
     if action == "_reload_engine":
         try:
-            # Step 1: Clear engine singleton
+            import importlib
+            # Step 1: Clear engine singleton on old module
             hermes_bridge._engine = None
             # Step 2: Reload engine sub-modules so config defaults are refreshed
-            import importlib
             for mod_name in list(sys.modules.keys()):
                 if mod_name.startswith("engine.") and mod_name != "engine":
                     sys.modules.pop(mod_name, None)
-            if "engine.config" in sys.modules:
-                sys.modules.pop("engine.config", None)
-            if "engine.engine" in sys.modules:
-                sys.modules.pop("engine.engine", None)
-            if "engine.runtime" in sys.modules:
-                sys.modules.pop("engine.runtime", None)
-            # Step 3: Re-init engine with fresh config
-            eng = hermes_bridge._get_engine()
+            for key in ["engine.config", "engine.engine", "engine.runtime"]:
+                sys.modules.pop(key, None)
+            # Step 3: Reload bridge module so code changes take effect
+            bridge_name = hermes_bridge.__name__
+            sys.modules.pop(bridge_name, None)
+            importlib.invalidate_caches()
+            # Step 4: Re-import bridge + re-init engine with fresh config
+            from . import hermes_bridge as hb
+            eng = hb._get_engine()
             return json.dumps({
-                "message": "Engine reloaded",
+                "message": "Engine + bridge reloaded",
                 "profiles": list(eng.health_snapshot.get("profiles", [])),
                 "active_runs": eng.health_snapshot.get("active_runs", 0),
                 "health_score": eng.health_snapshot.get("health_score", 0),
