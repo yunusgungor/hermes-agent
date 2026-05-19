@@ -174,27 +174,60 @@ def handle_status(args: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def handle_approve(args: Dict[str, Any]) -> Dict[str, Any]:
-    """Approve a pending task."""
+    """Approve a pending task — profile-aware, condition override ile."""
     slug = args.get("slug", "")
     user_id = args.get("user_id", "hermes")
     if not slug:
         return {"error": "slug is required"}
     engine = _get_engine()
+
+    # Run ve profil bilgilerini al
+    run = engine.get_run(slug)
+    if not run:
+        return {"error": f"Run '{slug}' not found"}
+
+    profile = engine._get_profile(run.meta.profile)
+    if not profile or not profile.state_machine:
+        return {"error": "Profile or state machine not available"}
+
+    sm = profile.state_machine
+    current_state = run.meta.state
+
+    # Mevcut state'ten human_approved condition'ı olan transition'ı bul
+    transitions = sm._transition_map.get(current_state, [])
+    target_state = None
+    for t in transitions:
+        if t.condition and "human_approved" in t.condition:
+            target_state = t.to_state
+            break
+
+    if not target_state:
+        # human_approved condition'ı yoksa fallback: "release" (software profile)
+        target_state = "release"
+
     try:
-        run = engine._do_transition(slug, "release")
+        # runtime_overrides ile human_approved=True geç → condition engine bypass
+        run = engine._do_transition(slug, target_state,
+                                    runtime_overrides={"human_approved": True})
         if hasattr(engine, 'approval_gate') and engine.approval_gate:
             import asyncio
             try:
                 asyncio.run(engine.approval_gate.approve_task(slug, user_id))
             except Exception:
                 pass
-        return {"slug": slug, "state": run.meta.state, "approved": True}
+        return {
+            "slug": slug,
+            "state": run.meta.state,
+            "from_state": current_state,
+            "transition": target_state,
+            "approved": True,
+        }
     except ValueError as e:
         if hasattr(engine, 'approval_gate') and engine.approval_gate:
             import asyncio
             try:
                 asyncio.run(engine.approval_gate.approve_task(slug, user_id))
-                return {"slug": slug, "approved": True, "note": "approval_gate only"}
+                return {"slug": slug, "approved": True, "note": "approval_gate only", "error": str(e)}
             except Exception:
                 pass
         return {"error": str(e)}
@@ -677,6 +710,8 @@ def handle_all(args: Dict[str, Any]) -> Dict[str, Any]:
             import importlib
             for mod_name in list(_sys.modules.keys()):
                 if mod_name.startswith("engine.") and mod_name != "engine":
+                    _sys.modules.pop(mod_name, None)
+                if mod_name.startswith("profiles.") or mod_name == "profiles":
                     _sys.modules.pop(mod_name, None)
             for key in ["engine.config", "engine.engine", "engine.runtime"]:
                 _sys.modules.pop(key, None)
