@@ -555,21 +555,34 @@ def register_haber_actions():
         import sys
         import importlib
         import importlib.util
+        from pathlib import Path as _Path
         plugins_dir = str(Path(__file__).parent.parent)
         if plugins_dir not in sys.path:
             sys.path.insert(0, plugins_dir)
 
         # Try archive first (clean migration path), fallback to live dir
-        try:
-            mod = importlib.import_module("plugins.archive.haber_kurator.haber_kurator_core")
-            HaberKuratorCore = mod.HaberKuratorCore
-        except (ImportError, AttributeError):
-            try:
-                mod = importlib.import_module("haber_os.haber_kurator_core")
-                HaberKuratorCore = mod.HaberKuratorCore
-            except (ImportError, AttributeError):
-                logger.warning("HaberKuratorCore not available (migrated to Prodinamik Engine)")
-                return
+        HaberKuratorCore = None
+        for candidate in [
+            Path(__file__).parent.parent / "archive" / "haber-kurator" / "haber_kurator_core.py",
+            Path(__file__).parent.parent / "haber-kurator" / "haber_kurator_core.py",
+        ]:
+            if candidate.exists():
+                try:
+                    spec = importlib.util.spec_from_file_location("haber_kurator_core", str(candidate))
+                    if spec:
+                        mod = importlib.util.module_from_spec(spec)
+                        mod.__package__ = ""
+                        sys.modules["haber_kurator_core"] = mod
+                        spec.loader.exec_module(mod)
+                        HaberKuratorCore = getattr(mod, "HaberKuratorCore", None)
+                        if HaberKuratorCore:
+                            break
+                except Exception:
+                    continue
+
+        if not HaberKuratorCore:
+            logger.warning("HaberKuratorCore not available (migrated to Prodinamik Engine)")
+            return
 
         plugin_root = plugin_root = Path(__file__).parent.parent / "haber-kurator"
         if not plugin_root.exists() or not (plugin_root / "strategy").exists():
