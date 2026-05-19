@@ -944,6 +944,18 @@ def handle_all(args: Dict[str, Any]) -> Dict[str, Any]:
     if action == "ai_status":
         return _handle_ai_status(args)
 
+    # ── C2: Skill emergence (AI Grid) ──
+    if action == "generate_skills":
+        return _handle_generate_skills(args)
+    if action == "drift_emergence":
+        return _handle_drift_emergence(args)
+    
+    # ── C3: Warm Agent ──
+    if action == "agent_status":
+        return _handle_agent_status(args)
+    if action == "agent_queue":
+        return _handle_agent_queue(args)
+
     # ── Audit: query audit log ──
     if action == "audit_query":
         return _handle_audit_query(args)
@@ -1147,6 +1159,86 @@ def _handle_ai_status(args: Dict[str, Any]) -> Dict[str, Any]:
         },
         "status": "ok",
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# C2: SKILL EMERGENCE — AI Grid Action Handlers
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _handle_generate_skills(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Trigger emergence detection + skill generation (C2).
+    
+    Scans recorded drift events, finds emergence candidates (3+ same type),
+    generates SKILL.md files, and saves them to disk.
+    """
+    engine = _get_engine()
+    try:
+        results = engine.check_emergence()
+        return {
+            "skills_generated": len(results),
+            "skills": results,
+            "status": "ok",
+        }
+    except Exception as e:
+        logger.error(f"generate_skills failed: {e}")
+        return {"error": str(e)}
+
+
+def _handle_drift_emergence(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Show drift data + emergence candidates.
+    
+    Shows all recorded drift events and emergence candidates
+    without generating skills.
+    """
+    engine = _get_engine()
+    try:
+        # Get drift events
+        drift_events = engine._drift_detector.collector._events
+        events_by_type = engine._drift_detector.collector.count_by_type()
+        
+        # Find emergence candidates
+        candidates = engine._drift_detector.find_emergence_candidates(min_occurrences=3)
+        
+        # Anomaly scan
+        anomalies = engine._drift_detector.scan_anomalies()
+        
+        return {
+            "total_drift_events": len(drift_events),
+            "events_by_type": events_by_type,
+            "emergence_candidates": [c.to_dict() for c in candidates],
+            "anomalous_runs": anomalies.get("anomalous_runs", []),
+            "anomalous_types": anomalies.get("anomalous_types", []),
+            "status": "ok",
+        }
+    except Exception as e:
+        logger.error(f"drift_emergence failed: {e}")
+        return {"error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# C3: WARM AGENT — Background Coordinator Handlers
+# ═══════════════════════════════════════════════════════════════════
+
+
+def _handle_agent_status(args: Dict[str, Any]) -> Dict[str, Any]:
+    """Get Warm Agent Coordinator status and metrics."""
+    engine = _get_engine()
+    try:
+        return engine.agent_status()
+    except Exception as e:
+        logger.error(f"agent_status failed: {e}")
+        return {"error": str(e)}
+
+
+def _handle_agent_queue(args: Dict[str, Any]) -> Dict[str, Any]:
+    """List all background agent tasks."""
+    engine = _get_engine()
+    try:
+        return engine.agent_queue()
+    except Exception as e:
+        logger.error(f"agent_queue failed: {e}")
+        return {"error": str(e)}
 
 
 # ═══════════════════════════════════════════════════════════════════

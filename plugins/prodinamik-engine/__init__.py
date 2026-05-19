@@ -39,7 +39,7 @@ def register(ctx: Any) -> None:
         "name": "prodinamik",
         "description": (
             "Prodinamik Engine — workflow management. "
-            "47 actions: core (run, list, status, approve, reject, next, "
+            "51 actions: core (run, list, status, approve, reject, next, "
             "transition, resume, dashboard, budget) + "
             "content (setup, audit, decide_route, scan_slop, score, signal, "
             "search_runs, archive_run, buffer_setup, buffer_send, buffer_status, "
@@ -79,6 +79,10 @@ def register(ctx: Any) -> None:
                         "check_correction", "sources",
                         # AI features (NEW — Phase 1)
                         "ai_detect", "ai_predict", "ai_recommend", "ai_status",
+                        # Skill emergence — C2: AI Grid (NEW)
+                        "generate_skills", "drift_emergence",
+                        # Warm Agent — C3 (NEW)
+                        "agent_status", "agent_queue",
                         # Observability (NEW — Phase 1)
                         "audit_query", "metrics", "alert_send",
                         # Management (NEW — Phase 2)
