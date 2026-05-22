@@ -1,6 +1,6 @@
 name: prodinamik-engine
 version: 1.8.0
-description: "Workflow engine: state machine, validation, event sourcing, AI Grid, Raft consensus"
-type: general
+description: "Prodinamik Engine v1.8.0 — Product-Agnostic Pipeline Engine. 51 actions: pipeline lifecycle (run, transition, resume, approve, reject), content operations, haber news verification, AI Grid (drift, predict, recommend), observability, auth, raft, config, debug. Registers slash commands: /run, /p-approve, /p-next, /p-status, /p-resume."
 author: Yunus Güngör
 license: MIT
+kind: standalone

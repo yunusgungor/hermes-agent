@@ -218,6 +218,31 @@ def register(ctx: Any) -> None:
 
     logger.info(f"Prodinamik Engine v{VERSION} loaded with 34 actions (9 core + 15 content + 10 haber)")
 
+    # ══════════════════════════════════════════════════════════════
+    # TELEGRAM COMPATIBILITY: Re-register commands without args_hint
+    # ══════════════════════════════════════════════════════════════
+    #
+    # The Telegram bot command menu (setMyCommands) excludes plugin
+    # commands whose ``args_hint`` starts with ``<`` (required arg).
+    # To make all commands visible in Telegram, re-register them
+    # without `args_hint` so the filter passes.
+    #
+    for _name, _handler, _desc in [
+        ("run", lambda raw, **kw: _handle_slash_run(raw, ctx), "Create a new workflow run"),
+        ("p-approve", lambda raw, **kw: _handle_slash_approve(raw, ctx), "Approve a pending task"),
+        ("p-next", lambda raw, **kw: _handle_slash_next(raw, ctx), "Show next step for a run"),
+        ("p-status", lambda raw, **kw: _handle_slash_status(raw, ctx), "Show engine or run status"),
+        ("p-resume", lambda raw, **kw: _handle_slash_resume(raw, ctx), "Resume a paused run"),
+    ]:
+        ctx.register_command(
+            name=f"/{_name}",
+            handler=_handler,
+            description=_desc,
+            args_hint="",  # No hint → passes _requires_argument() → shows in Telegram
+        )
+
+    logger.info(f"Prodinamik Engine v{VERSION}: 5 slash commands re-registered for Telegram menu")
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Tool Handler
