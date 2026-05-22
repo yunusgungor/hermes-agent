@@ -1,0 +1,6 @@
+# Runtime data — git'e eklenmez
+.hermes/
+
+# Python cache
+__pycache__/
+*.py[cod]
