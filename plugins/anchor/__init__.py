@@ -79,17 +79,19 @@ def _patch_chat_method(agent: Any, mode: str = "silent") -> None:
 
         if report:
             n_corrections = report.get("corrections", 0)
+            details = report.get("details", [])
 
             if mode == "report":
+                corrected += f"\n\n---\n⚓ **Anchor Düzeltmesi:** {n_corrections} hata"
                 rules = ", ".join(report.get("rules_activated", [])[:3])
-                topics = ", ".join(report.get("topics_found", [])[:3])
-                corrected += (
-                    f"\n\n---\n⚓ **Anchor Düzeltmesi:** {n_corrections} hata düzeltildi"
-                )
                 if rules:
                     corrected += f"\n📋 Kurallar: {rules}"
-                if topics:
-                    corrected += f"\n🏷️ Konular: {topics}"
+                # Her düzeltme için inline detay
+                for d in details[:5]:  # max 5
+                    sev_icon = {"CRITICAL": "🔴", "ERROR": "❌", "WARNING": "⚠️", "INFO": "ℹ️"}.get(d.get("severity", ""), "•")
+                    corrected += f"\n{sev_icon} ~~{d['original']}~~ → {d['corrected']}"
+                if len(details) > 5:
+                    corrected += f"\n... ve {len(details) - 5} düzeltme daha"
             elif mode == "annotated":
                 corrected += f"\n\n⚓ {n_corrections} düzeltme uygulandı"
             # silent mode: seamless

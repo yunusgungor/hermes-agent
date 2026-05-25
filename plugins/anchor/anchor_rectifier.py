@@ -89,10 +89,13 @@ def rectify(user_query: str, llm_output: str) -> tuple[str, Optional[dict]]:
     """
     LLM çıktısını Anchor ile doğrula ve düzelt.
 
+    Hermes stratejisi:
+    - LLM'in orijinal cevabını HER ZAMAN koru (asla değiştirme)
+    - Düzeltme varsa rapor olarak döndür, report modu ekler
+    - Anchor'ın corrected metnini kullanma — sadece tespit için kullan
+
     Returns:
-        (corrected_text, report_dict or None)
-        - corrected_text: Düzeltilmiş metin (veya orijinal, eğer düzeltme gerekmezse)
-        - report: Anchor raporu (varsa), None (düzeltme yoksa veya hata varsa)
+        (orijinal_llm_yaniti, report_dict or None)
     """
     if not _anchor_enabled or _anchor_engine is None:
         return llm_output, None
@@ -104,18 +107,33 @@ def rectify(user_query: str, llm_output: str) -> tuple[str, Optional[dict]]:
         )
 
         if result.modified:
-            corrections = len(result.corrections)
+            n = len(result.corrections)
             report = {
-                "corrections": corrections,
+                "corrections": n,
                 "rules_activated": result.rules_activated,
                 "topics_found": [t.name for t in result.topics_found],
                 "step_violations": len(result.step_violations) if result.step_violations else 0,
+                "details": [],
             }
+
+            for c in result.corrections:
+                orig = c.original_text[:100]
+                corr = c.corrected_text[:100]
+                sev = c.conflict.severity.name if hasattr(c.conflict, 'severity') else "INFO"
+                report["details"].append({
+                    "original": orig,
+                    "corrected": corr,
+                    "severity": sev,
+                    "rule": c.conflict.rule_id if hasattr(c.conflict, 'rule_id') else "?",
+                })
+
             logger.info(
-                "⚓ Rectified: %d corrections, rules=%s",
-                corrections, result.rules_activated[:3],
+                "⚓ Detected: %d corrections in LLM output (rules=%s) — original preserved",
+                n, result.rules_activated[:3],
             )
-            return result.corrected, report
+
+            # LLM'in orijinal cevabını döndür, düzeltmeler rapor olarak gelir
+            return llm_output, report
         else:
             return llm_output, None
 
