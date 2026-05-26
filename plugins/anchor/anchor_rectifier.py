@@ -4,7 +4,7 @@ Anchor Rectifier — Hermes Agent için Anchor Engine entegrasyonu.
 Bu modül, LLM çıktılarını Anchor Engine ile deterministik olarak
 doğrular ve düzeltir. Her turda OTOMATİK çalışır — LLM kararı değil.
 
-v1.2.0: Educational content detection — workflow false positive prevention.
+v1.3.0: Type-aware educational filtering — domain rules always active, hybrid rules factual-only.
 """
 
 import logging
@@ -238,17 +238,19 @@ def rectify(user_query: str, llm_output: str,
                 corr = c.corrected_text[:100]
                 sev = c.conflict.severity.name if hasattr(c.conflict, 'severity') else "INFO"
                 confidence = getattr(c.conflict, 'confidence', 0.5)
+                rule_type = getattr(c.conflict, 'rule_type', 'domain')
                 report["details"].append({
                     "original": orig,
                     "corrected": corr,
                     "severity": sev,
                     "confidence": round(confidence, 2),
                     "rule": c.conflict.rule_id if hasattr(c.conflict, 'rule_id') else "?",
+                    "rule_type": rule_type,
                 })
 
             logger.info(
-                "⚓ Detected: %d corrections in LLM output (rules=%s) — original preserved",
-                n, result.rules_activated[:3],
+                "⚓ Detected: %d corrections in LLM output (rules=%s, educational=%s) — original preserved",
+                n, result.rules_activated[:3], skip_workflow_rules,
             )
 
             return llm_output, report

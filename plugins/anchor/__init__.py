@@ -2,14 +2,14 @@
 ⚓ Anchor Rectifier Plugin — Hermes Agent için deterministik LLM doğrulama.
 
 Her LLM yanıtı otomatik olarak Anchor Engine'den geçer.
-v1.2.0: Educational content detection + confidence threshold filtering.
+v1.3.0: Type-aware rule filtering (domain/hybrid/workflow) + adaptive confidence.
 LLM'in kararına bırakılmaz — her zaman aktif.
 """
 
 import logging
 from typing import Any
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 logger = logging.getLogger(__name__)
 
 
@@ -166,7 +166,8 @@ def _patch_run_conversation(agent: Any, mode: str = "silent") -> None:
         )
 
         # Annotated mode: confidence eşiği filtresi
-        # Eğitim içeriğinde düşük-confidence factual corrections da FP olabilir
+        # Domain corrections: lower threshold (0.5) — factual bilgi kritik
+        # Hybrid corrections: medium threshold (0.7) — eğitim içeriğinde FP önleme
         CONFIDENCE_THRESHOLD = 0.7
 
         if report:
@@ -174,18 +175,31 @@ def _patch_run_conversation(agent: Any, mode: str = "silent") -> None:
             details = report.get("details", [])
             mode_now = mode
 
-            # Confidence filtresi uygula
+            # Confidence filtresi — rule_type'a göre adaptive threshold
+            # Domain: 0.5 (factual bilgi kritik, düşük confidence'da da göster)
+            # Hybrid: 0.7 (eğitim içeriğinde FP önleme)
+            # Workflow: zaten engine'de filtrelendi, buraya gelmez
+            
+            def _passes_threshold(d: dict) -> bool:
+                rt = d.get("rule_type", "domain")
+                conf = d.get("confidence", 0)
+                if rt == "domain":
+                    return conf >= 0.5
+                elif rt == "hybrid":
+                    return conf >= 0.7
+                return conf >= 0.7  # fallback
+            
             filtered_details = [
                 d for d in details
-                if d.get("confidence", 0) >= CONFIDENCE_THRESHOLD
+                if _passes_threshold(d)
             ]
             filtered_count = len(filtered_details)
             filtered_out = n_corrections - filtered_count
 
             if filtered_out > 0:
                 logger.debug(
-                    "⚓ Filtered %d/%d corrections below confidence=%.1f threshold",
-                    filtered_out, n_corrections, CONFIDENCE_THRESHOLD,
+                    "⚓ Filtered %d/%d corrections below threshold (domain=0.5, hybrid=0.7)",
+                    filtered_out, n_corrections,
                 )
 
             if mode_now == "report":
