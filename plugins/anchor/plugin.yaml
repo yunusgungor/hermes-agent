@@ -1,5 +1,5 @@
 name: anchor
-version: 1.4.0
-description: "⚓ Anchor Engine — LLM çıktılarını deterministik olarak doğrular ve düzeltir (corrective mode)"
+version: 3.1.0
+description: "⚓ Anchor Guardrail — In-Turn Interleaved LLM doğrulama (tek mod, generation-time, adaptive feedback)"
 author: "Yunus Güngör"
 kind: standalone
