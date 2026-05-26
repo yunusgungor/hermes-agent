@@ -4,14 +4,19 @@ Anchor Rectifier — Hermes Agent için Anchor Engine entegrasyonu.
 Bu modül, LLM çıktılarını Anchor Engine ile deterministik olarak
 doğrular ve düzeltir. Her turda OTOMATİK çalışır — LLM kararı değil.
 
-v1.3.0: Type-aware educational filtering — domain rules always active, hybrid rules factual-only.
+v2.0.0: v5.0 Active Steering entegrasyonu:
+  - generate_steering_feedback() → GaaA-inspired StructuredFeedback
+  - steering_rectify()          → Enhanced report + feedback
+  - steering_posthoc()          → Post-hoc steering loop (corrective + history)
+  - HermesLLMGenerator          → Interactive mode için LLM generator protocol
 """
+from __future__ import annotations
 
 import logging
 import os
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -273,6 +278,8 @@ def apply_corrections(llm_output: str, report: Optional[dict],
     düzeltilmiş versiyonlarıyla değiştirir. Her düzeltme için sadece İLK geçen
     değiştirilir (str.replace(..., 1)).
 
+    Bu graduated escalation'ın "CORRECT" seviyesidir — direkt müdahale.
+
     Args:
         llm_output: LLM'in orijinal çıktısı (string)
         report: Anchor rectify()'den gelen report dict (veya None)
@@ -322,6 +329,412 @@ def apply_corrections(llm_output: str, report: Optional[dict],
             actual_changes += 1
 
     return corrected, actual_changes
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# v5.0 Active Steering — Structured Feedback & Steering Loop Integration
+# ══════════════════════════════════════════════════════════════════════════
+
+def generate_steering_feedback(
+    user_query: str,
+    llm_output: str,
+    skip_workflow_rules: bool = False,
+) -> Optional[dict]:
+    """
+    LLM çıktısından yapılandırılmış geribildirim üret (GaaA formatı).
+
+    StructuredFeedback objesini makine tarafından işlenebilir dict'e
+    dönüştürür. Hermes plugin'in "steering" modu için.
+
+    Returns:
+        {
+            "feedback_text":       "İnsan tarafından okunabilir metin",
+            "items":               [feedback_item_dict, ...],
+            "rule_count":          int,
+            "total_violations":    int,
+            "max_severity":        str,
+            "content_type":        str,
+            "has_workflow_violations": bool,
+            "has_factual_conflicts":   bool,
+        } veya None (violation yoksa / engine hazır değilse)
+    """
+    if not _anchor_enabled or _anchor_engine is None:
+        return None
+
+    try:
+        feedback = _anchor_engine.generate_feedback(
+            user_query=user_query,
+            llm_output=llm_output,
+            skip_workflow_rules=skip_workflow_rules,
+        )
+    except Exception as e:
+        logger.warning("⚓ Feedback generation failed (non-fatal): %s", e)
+        return None
+
+    if not feedback.feedback_items:
+        return None
+
+    # Dict'e çevir
+    items = []
+    for item in feedback.feedback_items:
+        items.append({
+            "rule": item.rule,
+            "rule_type": item.rule_type,
+            "violation": item.violation,
+            "severity": item.severity,
+            "correction": item.correction,
+            "original": item.original,
+            "confidence": item.confidence,
+            "step_violation": item.step_violation,
+        })
+
+    return {
+        "feedback_text": feedback.feedback_text,
+        "items": items,
+        "rule_count": feedback.rule_count,
+        "total_violations": feedback.total_violations,
+        "max_severity": feedback.max_severity.name if feedback.max_severity else "NONE",
+        "content_type": feedback.content_type.value if feedback.content_type else "factual",
+        "has_workflow_violations": feedback.has_workflow_violations,
+        "has_factual_conflicts": feedback.has_factual_conflicts,
+    }
+
+
+def steering_rectify(
+    user_query: str,
+    llm_output: str,
+    skip_workflow_rules: bool = False,
+) -> tuple[str, Optional[dict], Optional[dict]]:
+    """
+    Enhanced rectification — hem klasik report hem de GaaA feedback döndürür.
+
+    "steering" modu için unified API:
+      - corrections_report: Eski tarz anchor_rectifier report dict (rectify() gibi)
+      - feedback_dict:      Yeni StructuredFeedback dict (generate_steering_feedback() gibi)
+
+    Returns:
+        (orijinal_llm_yaniti, corrections_report, feedback_dict)
+    """
+    if not _anchor_enabled or _anchor_engine is None:
+        return llm_output, None, None
+
+    # Önce klasik rectification (corrections report)
+    corrections_report = None
+    feedback_dict = None
+
+    try:
+        result = _anchor_engine.process(
+            user_query=user_query,
+            llm_output=llm_output,
+            skip_workflow_rules=skip_workflow_rules,
+        )
+
+        if result.modified:
+            n = len(result.corrections)
+            corrections_report = {
+                "modified": True,
+                "corrections": n,
+                "rules_activated": result.rules_activated,
+                "topics_found": [t.name for t in result.topics_found],
+                "step_violations": len(result.step_violations) if result.step_violations else 0,
+                "details": [],
+            }
+
+            for c in result.corrections:
+                sev = c.conflict.severity.name if hasattr(c.conflict, 'severity') else "INFO"
+                confidence = getattr(c.conflict, 'confidence', 0.5)
+                rule_type = getattr(c.conflict, 'rule_type', 'domain')
+                corrections_report["details"].append({
+                    "original": c.original_text[:100],
+                    "corrected": c.corrected_text[:100],
+                    "full_original": c.original_text,
+                    "full_corrected": c.corrected_text,
+                    "severity": sev,
+                    "confidence": round(confidence, 2),
+                    "rule": c.conflict.rule_id if hasattr(c.conflict, 'rule_id') else "?",
+                    "rule_type": rule_type,
+                })
+    except Exception as e:
+        logger.warning("⚓ Steering rectify process failed (non-fatal): %s", e)
+
+    # Ardından structured feedback
+    try:
+        feedback = _anchor_engine.generate_feedback(
+            user_query=user_query,
+            llm_output=llm_output,
+            skip_workflow_rules=skip_workflow_rules,
+        )
+
+        if feedback and feedback.feedback_items:
+            items = []
+            for item in feedback.feedback_items:
+                items.append({
+                    "rule": item.rule,
+                    "rule_type": item.rule_type,
+                    "violation": item.violation,
+                    "severity": item.severity,
+                    "correction": item.correction,
+                    "original": item.original,
+                    "confidence": item.confidence,
+                    "step_violation": item.step_violation,
+                })
+
+            feedback_dict = {
+                "feedback_text": feedback.feedback_text,
+                "items": items,
+                "rule_count": feedback.rule_count,
+                "total_violations": feedback.total_violations,
+                "max_severity": feedback.max_severity.name if feedback.max_severity else "NONE",
+                "content_type": feedback.content_type.value if feedback.content_type else "factual",
+                "has_workflow_violations": feedback.has_workflow_violations,
+                "has_factual_conflicts": feedback.has_factual_conflicts,
+            }
+    except Exception as e:
+        logger.warning("⚓ Steering feedback gen failed (non-fatal): %s", e)
+
+    return llm_output, corrections_report, feedback_dict
+
+
+def steering_posthoc(
+    user_query: str,
+    llm_output: str,
+    skip_workflow_rules: bool = False,
+) -> dict:
+    """
+    Post-hoc steering loop — tek tur, LLM re-gen olmadan.
+
+    SteeringLoop.run_posthoc()'u sarar. Corrective mode +
+    structured feedback + escalation + exhaustion döndürür.
+
+    Returns:
+        {
+            "corrected":              str (düzeltilmiş output veya original)
+            "feedback":               dict veya None (StructuredFeedback)
+            "history_summary":        str
+            "escalation_level":       str (NOOP, ADVISE, ..., ESCALATE)
+            "is_exhausted":           bool
+            "total_rounds":           int
+            "correction_count":       int
+        }
+    """
+    if not _anchor_enabled or _anchor_engine is None:
+        return {
+            "corrected": llm_output,
+            "feedback": None,
+            "history_summary": "Engine not active",
+            "escalation_level": "NOOP",
+            "is_exhausted": False,
+            "total_rounds": 0,
+            "correction_count": 0,
+        }
+
+    try:
+        from anchor.steering.loop import SteeringLoop
+
+        loop = SteeringLoop(engine=_anchor_engine)
+        corrected, feedback, history = loop.run_posthoc(
+            user_query=user_query,
+            llm_output=llm_output,
+            skip_workflow_rules=skip_workflow_rules,
+        )
+
+        # Son turdan escalation/exhaustion bilgisi
+        last_round = history.rounds[-1] if history.rounds else None
+        escalation_level = "NOOP"
+        is_exhausted = False
+        correction_count = 0
+
+        if last_round:
+            if last_round.escalation:
+                escalation_level = last_round.escalation.level.name
+            if last_round.exhaustion:
+                is_exhausted = last_round.exhaustion.is_exhausted
+            correction_count = last_round.correction_count
+
+        # Feedback'i dict'e çevir
+        feedback_dict = None
+        if feedback and feedback.feedback_items:
+            items = []
+            for item in feedback.feedback_items:
+                items.append({
+                    "rule": item.rule,
+                    "rule_type": item.rule_type,
+                    "violation": item.violation,
+                    "severity": item.severity,
+                    "correction": item.correction,
+                    "original": item.original,
+                    "confidence": item.confidence,
+                    "step_violation": item.step_violation,
+                })
+
+            feedback_dict = {
+                "feedback_text": feedback.feedback_text,
+                "items": items,
+                "rule_count": feedback.rule_count,
+                "total_violations": feedback.total_violations,
+                "max_severity": feedback.max_severity.name if feedback.max_severity else "NONE",
+                "content_type": feedback.content_type.value if feedback.content_type else "factual",
+                "has_workflow_violations": feedback.has_workflow_violations,
+                "has_factual_conflicts": feedback.has_factual_conflicts,
+            }
+
+        return {
+            "corrected": corrected,
+            "feedback": feedback_dict,
+            "history_summary": history.summary(),
+            "escalation_level": escalation_level,
+            "is_exhausted": is_exhausted,
+            "total_rounds": history.total_rounds,
+            "correction_count": correction_count,
+        }
+
+    except Exception as e:
+        logger.warning("⚓ Steering posthoc failed (non-fatal): %s", e)
+        return {
+            "corrected": llm_output,
+            "feedback": None,
+            "history_summary": f"Error: {e}",
+            "escalation_level": "NOOP",
+            "is_exhausted": False,
+            "total_rounds": 0,
+            "correction_count": 0,
+        }
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Interactive Steering — Hermes LLM Generator Protocol
+# ══════════════════════════════════════════════════════════════════════════
+
+class HermesLLMGenerator:
+    """
+    Hermes Agent için LLMGeneratorProtocol implementasyonu.
+
+    SteeringLoop.run()'un LLM re-generation ihtiyacı için.
+    Hermes agent'ın LLM client'ını kullanarak yeniden üretim yapar.
+
+    Kullanım:
+        generator = HermesLLMGenerator(agent)
+        loop = SteeringLoop(engine=_anchor_engine, generator=generator)
+        history = loop.run(user_query, llm_output)
+    """
+
+    def __init__(self, agent: Any):
+        """
+        Args:
+            agent: Hermes AIAgent instance (session'daki agent)
+        """
+        self._agent = agent
+        self._llm_client = self._resolve_llm_client()
+
+    def _resolve_llm_client(self) -> Optional[Any]:
+        """Hermes agent'ın LLM client'ını bul."""
+        # AIAgent.llm_client (yeni mimari)
+        if hasattr(self._agent, 'llm_client') and self._agent.llm_client:
+            return self._agent.llm_client
+        # AIAgent.client (eski mimari)
+        if hasattr(self._agent, 'client') and self._agent.client:
+            return self._agent.client
+        # AIAgent.model_client
+        if hasattr(self._agent, 'model_client') and self._agent.model_client:
+            return self._agent.model_client
+        return None
+
+    def generate(self, prompt: str, context: str = "") -> str:
+        """
+        Hermes LLM client ile yeniden üretim yap.
+
+        Args:
+            prompt:  Orijinal kullanıcı sorgusu
+            context: Anchor feedback + re-generation talimatı
+
+        Returns:
+            LLM'in yeniden ürettiği yanıt
+        """
+        if not self._llm_client:
+            logger.warning(
+                "⚓ No LLM client available for steering re-generation. "
+                "Falling back to original output."
+            )
+            return context if context else prompt
+
+        # Re-generation prompt'u oluştur
+        full_prompt = self._build_regen_prompt(prompt, context)
+
+        try:
+            # Hermes LLM client'ı çağır
+            if hasattr(self._llm_client, 'chat_completion'):
+                response = self._llm_client.chat_completion(
+                    messages=[{"role": "user", "content": full_prompt}],
+                )
+            elif hasattr(self._llm_client, 'generate'):
+                response = self._llm_client.generate(prompt=full_prompt)
+            else:
+                # Generic call method
+                response = self._llm_client(full_prompt)
+
+            text = self._extract_text(response)
+            if text:
+                logger.info("⚓ Steering re-generation successful (%d chars)", len(text))
+                return text
+        except Exception as e:
+            logger.warning("⚓ Steering re-generation failed: %s — using original output", e)
+
+        # Fallback: context içinde LLM yanıtı yoksa original output'u döndür
+        return context if context else prompt
+
+    def _build_regen_prompt(self, original_query: str, feedback_context: str) -> str:
+        """Yeniden üretim prompt'unu oluştur."""
+        return (
+            f"## Kullanıcı Sorusu\n{original_query}\n\n"
+            f"{feedback_context}\n\n"
+            "Yukarıdaki düzeltme önerilerini dikkate alarak "
+            "yanıtınızı yeniden yazın. "
+            "Önerilerdeki tüm düzeltmeleri uygulayın, "
+            "ancak yanıtınızın doğal akışını koruyun. "
+            "Anchor notlarını yanıta eklemeyin."
+        )
+
+    def _extract_text(self, response: Any) -> Optional[str]:
+        """LLM yanıtından metin çıkar — çeşitli response formatlarını dene."""
+        if isinstance(response, str):
+            return response
+        if isinstance(response, dict):
+            # OpenAI format
+            if 'choices' in response:
+                choice = response['choices'][0]
+                if isinstance(choice, dict):
+                    msg = choice.get('message', {})
+                    if isinstance(msg, dict):
+                        return msg.get('content', '')
+                    return getattr(msg, 'content', '') if hasattr(msg, 'content') else ''
+                return getattr(choice, 'message', {}).get('content', '') if hasattr(choice, 'message') else ''
+            # Direct content
+            return response.get('content', response.get('text', ''))
+        # Object
+        if hasattr(response, 'choices'):
+            choice = response.choices[0]
+            if hasattr(choice, 'message') and hasattr(choice.message, 'content'):
+                return choice.message.content
+            return getattr(choice, 'text', '')
+        return str(response) if response else None
+
+
+def create_steering_loop(generator: Optional[Any] = None) -> Any:
+    """
+    SteeringLoop instance'ı oluştur.
+
+    Args:
+        generator: HermesLLMGenerator veya None (post-hoc)
+            None → sadece run_posthoc() kullanılabilir
+
+    Returns:
+        SteeringLoop instance
+    """
+    if not _anchor_engine:
+        raise RuntimeError("Anchor Engine not initialized. Call init_engine() first.")
+
+    from anchor.steering.loop import SteeringLoop
+    return SteeringLoop(engine=_anchor_engine, generator=generator)
 
 
 def is_active() -> bool:
