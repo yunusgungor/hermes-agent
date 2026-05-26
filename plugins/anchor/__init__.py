@@ -2,7 +2,7 @@
 ⚓ Anchor Rectifier Plugin — Hermes Agent için deterministik LLM doğrulama.
 
 Her LLM yanıtı otomatik olarak Anchor Engine'den geçer.
-v1.4.0: Corrective mode — LLM çıktısını append değil doğrudan düzeltir.
+v1.5.0: Visibility footer — kullanıcı Anchor'un aktif olduğunu görür.
 v1.3.0: Type-aware rule filtering (domain/hybrid/workflow) + adaptive confidence.
 LLM'in kararına bırakılmaz — her zaman aktif.
 """
@@ -10,7 +10,7 @@ LLM'in kararına bırakılmaz — her zaman aktif.
 import logging
 from typing import Any
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 logger = logging.getLogger(__name__)
 
 
@@ -116,6 +116,58 @@ def _on_session_start(**kwargs: Any) -> None:
         )
 
 
+# ── Visibility Footer ─────────────────────────────────────────────────────
+# Seçenek 2: Sadece müdahale olduğunda detay göster.
+# Hiçbir şey düzeltilmediyse TAMAMEN SESSİZ.
+
+
+def _build_anchor_footer(
+    report: dict,
+    filtered_details: list[dict],
+    rules_count: int,
+) -> str:
+    """
+    Anchor düzeltme raporunu kullanıcıya gösteren footer.
+
+    Format:
+    ━━━ Anchor ▸ 23 kural denetlendi ⚡ 2 düzeltme:
+    • naming-convention: `getData` → `fetchData`
+    • tdd-cycle: Test yazılmadan implementasyon önerildi → uyarı eklendi
+
+    Hiç düzeltme yoksa boş string döndürür.
+    """
+    n = len(filtered_details)
+    if n == 0:
+        return ""
+
+    # Kural isimlerini kısalt
+    rules_str = ", ".join(report.get("rules_activated", [])[:3])
+
+    lines = [
+        "",
+        f"━━━ Anchor ▸ {rules_count} kural denetlendi ⚡ {n} düzeltme:",
+    ]
+
+    for d in filtered_details[:5]:
+        rule = d.get("rule", "?")
+        orig = d.get("original", "").strip()[:80]
+        corr = d.get("corrected", "").strip()[:80]
+
+        if orig and corr and orig != corr:
+            lines.append(f"• `{rule}`: ~~{orig}~~ → **{corr}**")
+        else:
+            # Sadece uyarı (replace edilemeyen)
+            lines.append(f"• `{rule}`: {orig[:100]} → ⚠️ düzeltme önerisi")
+
+    if n > 5:
+        lines.append(f"… ve {n - 5} düzeltme daha")
+
+    if rules_str:
+        lines.append(f"📋 {rules_str}")
+
+    return "\n".join(lines)
+
+
 def _patch_run_conversation(agent: Any, mode: str = "silent") -> None:
     """
     AIAgent.run_conversation() metodunu Anchor post-processing ile saran wrapper.
@@ -126,7 +178,7 @@ def _patch_run_conversation(agent: Any, mode: str = "silent") -> None:
     - API Server:                  agent.run_conversation()
     - chat() metodu:               sadece run_conversation()'ı çağıran wrapper
 
-    v1.2.0: Educational content detection + confidence threshold.
+    v1.5.0: Visibility footer — kullanıcı Anchor'un çalıştığını görür.
     """
     original_run_conversation = agent.run_conversation
 
@@ -151,7 +203,12 @@ def _patch_run_conversation(agent: Any, mode: str = "silent") -> None:
         if not final_response:
             return result
 
-        from plugins.anchor.anchor_rectifier import rectify, _is_educational_content, apply_corrections
+        from plugins.anchor.anchor_rectifier import (
+            rectify,
+            _is_educational_content,
+            apply_corrections,
+            _anchor_engine,
+        )
 
         # 🔍 Yanıtı sınıflandır — eğitim içeriğinde workflow rule'larını pasifleştir
         is_educational = _is_educational_content(final_response)
@@ -160,111 +217,67 @@ def _patch_run_conversation(agent: Any, mode: str = "silent") -> None:
                 "⚓ Educational content detected — workflow rules disabled for this response"
             )
 
-        corrected, report = rectify(
+        _, report = rectify(
             user_query=user_message,
             llm_output=final_response,
             skip_workflow_rules=is_educational,
         )
 
-        # Annotated mode: confidence eşiği filtresi
-        # Domain corrections: lower threshold (0.5) — factual bilgi kritik
-        # Hybrid corrections: medium threshold (0.7) — eğitim içeriğinde FP önleme
-        CONFIDENCE_THRESHOLD = 0.7
+        if not report:
+            # Anchor aktif ama hiç sorun bulmadı — tamamen sessiz
+            return result
 
-        if report:
-            n_corrections = report.get("corrections", 0)
-            details = report.get("details", [])
-            mode_now = mode
+        details = report.get("details", [])
 
-            # ── Corrective Mode ──────────────────────────────────────────
-            # LLM çıktısını doğrudan düzelt, annotation ekleme
-            if mode_now == "corrective":
-                corrected_text, actual_changes = apply_corrections(
-                    final_response, report,
+        # ── 1. Corrective Mode: metni sessizce düzelt ───────────────────
+        if mode == "corrective":
+            corrected_text, actual_changes = apply_corrections(
+                final_response, report,
+            )
+            if actual_changes > 0:
+                logger.info(
+                    "⚓ Corrective: %d replacement(s) applied (rules=%s)",
+                    actual_changes, report.get("rules_activated", [])[:3],
                 )
-                if actual_changes > 0:
-                    logger.info(
-                        "⚓ Corrective: %d replacement(s) applied (rules=%s)",
-                        actual_changes, report.get("rules_activated", [])[:3],
-                    )
-                    result["final_response"] = corrected_text
-                else:
-                    # Hiçbir düzeltme eşiği geçemediyse annotated'a düş
-                    logger.debug(
-                        "⚓ Corrective: 0 replacements above threshold — falling back to annotated"
-                    )
-                    # Yine de annotated mode'a düş
-                    corrected_text = final_response
-                    mode_now = "annotated"
-                if actual_changes > 0:
-                    return result
+                result["final_response"] = corrected_text
 
-            # Confidence filtresi — rule_type'a göre adaptive threshold
-            # Domain: 0.5 (factual bilgi kritik, düşük confidence'da da göster)
-            # Hybrid: 0.7 (eğitim içeriğinde FP önleme)
-            # Workflow: zaten engine'de filtrelendi, buraya gelmez
-            
-            def _passes_threshold(d: dict) -> bool:
-                rt = d.get("rule_type", "domain")
-                conf = d.get("confidence", 0)
-                if rt == "domain":
-                    return conf >= 0.5
-                elif rt == "hybrid":
-                    return conf >= 0.7
-                return conf >= 0.7  # fallback
-            
-            filtered_details = [
-                d for d in details
-                if _passes_threshold(d)
-            ]
-            filtered_count = len(filtered_details)
-            filtered_out = n_corrections - filtered_count
+        # ── 2. Confidence Filtresi ──────────────────────────────────────
+        # Domain: 0.5 (factual bilgi kritik)
+        # Hybrid: 0.7 (eğitim içeriğinde FP önleme)
+        def _passes_threshold(d: dict) -> bool:
+            rt = d.get("rule_type", "domain")
+            conf = d.get("confidence", 0)
+            if rt == "domain":
+                return conf >= 0.5
+            elif rt == "hybrid":
+                return conf >= 0.7
+            return conf >= 0.7
 
-            if filtered_out > 0:
-                logger.debug(
-                    "⚓ Filtered %d/%d corrections below threshold (domain=0.5, hybrid=0.7)",
-                    filtered_out, n_corrections,
-                )
+        filtered_details = [d for d in details if _passes_threshold(d)]
+        filtered_out = len(details) - len(filtered_details)
 
-            if mode_now == "report":
-                if filtered_count > 0:
-                    corrected += f"\n\n---\n⚓ **Anchor Düzeltmesi:** {filtered_count} hata"
-                    if filtered_out > 0:
-                        corrected += f" ({filtered_out} düşük güven atlandı)"
-                    rules = ", ".join(report.get("rules_activated", [])[:3])
-                    if rules:
-                        corrected += f"\n📋 Kurallar: {rules}"
-                    for d in filtered_details[:5]:
-                        sev_icon = {
-                            "CRITICAL": "🔴",
-                            "ERROR": "❌",
-                            "WARNING": "⚠️",
-                            "INFO": "ℹ️",
-                        }.get(d.get("severity", ""), "•")
-                        orig = d.get("original", "")[:60]
-                        corr = d.get("corrected", "")[:60]
-                        corrected += f"\n{sev_icon} ~~{orig}~~ → {corr}"
-                    if len(filtered_details) > 5:
-                        corrected += f"\n... ve {len(filtered_details) - 5} düzeltme daha"
-                elif filtered_out > 0:
-                    corrected += f"\n\n---\n⚓ {filtered_out} düşük güvenli uyarı atlandı"
-            elif mode_now == "annotated":
-                if filtered_count > 0:
-                    corrected += f"\n\n⚓ {filtered_count} düzeltme uygulandı"
-                    if filtered_out > 0:
-                        corrected += f" ({filtered_out} düşük güven atlandı)"
-                elif filtered_out > 0 and is_educational:
-                    # Eğitim içeriği + tümü filtrelendi → sessiz geç
-                    pass
+        if filtered_out > 0:
+            logger.debug(
+                "⚓ Filtered %d/%d corrections below threshold (domain=0.5, hybrid=0.7)",
+                filtered_out, len(details),
+            )
 
-            # Update final_response in the result dict
-            result["final_response"] = corrected
+        # ── 3. Visibility Footer ────────────────────────────────────────
+        # Engine'den toplam kural sayısını al
+        rules_count = 0
+        engine = _anchor_engine
+        if engine and hasattr(engine, "store") and hasattr(engine.store, "_rule_meta"):
+            rules_count = len(engine.store._rule_meta)
+
+        footer = _build_anchor_footer(report, filtered_details, rules_count)
+        if footer:
+            result["final_response"] = (result.get("final_response") or final_response) + footer
 
         return result
 
     agent.run_conversation = anchored_run_conversation
     # chat() metodu zaten run_conversation()'ı çağırdığı için otomatik kapsanır
     logger.debug(
-        "⚓ AIAgent.run_conversation() patched with Anchor rectification v1.2.0 (mode=%s)",
+        "⚓ AIAgent.run_conversation() patched with Anchor rectification v1.5.0 (mode=%s)",
         mode,
     )
