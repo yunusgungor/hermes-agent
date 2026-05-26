@@ -11868,6 +11868,7 @@ class AIAgent:
                         session_id=self.session_id,
                         model=self.model,
                         platform=getattr(self, "platform", None) or "",
+                        agent=self,
                     )
                 except Exception as exc:
                     logger.warning("on_session_start hook failed: %s", exc)

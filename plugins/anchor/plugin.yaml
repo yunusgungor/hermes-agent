@@ -1,5 +1,5 @@
 name: anchor
-version: 1.3.0
-description: "⚓ Anchor Engine — LLM çıktılarını deterministik olarak doğrular ve düzeltir"
+version: 1.4.0
+description: "⚓ Anchor Engine — LLM çıktılarını deterministik olarak doğrular ve düzeltir (corrective mode)"
 author: "Yunus Güngör"
 kind: standalone

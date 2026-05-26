@@ -2,6 +2,7 @@
 ⚓ Anchor Rectifier Plugin — Hermes Agent için deterministik LLM doğrulama.
 
 Her LLM yanıtı otomatik olarak Anchor Engine'den geçer.
+v1.4.0: Corrective mode — LLM çıktısını append değil doğrudan düzeltir.
 v1.3.0: Type-aware rule filtering (domain/hybrid/workflow) + adaptive confidence.
 LLM'in kararına bırakılmaz — her zaman aktif.
 """
@@ -9,7 +10,7 @@ LLM'in kararına bırakılmaz — her zaman aktif.
 import logging
 from typing import Any
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 logger = logging.getLogger(__name__)
 
 
@@ -150,7 +151,7 @@ def _patch_run_conversation(agent: Any, mode: str = "silent") -> None:
         if not final_response:
             return result
 
-        from plugins.anchor.anchor_rectifier import rectify, _is_educational_content
+        from plugins.anchor.anchor_rectifier import rectify, _is_educational_content, apply_corrections
 
         # 🔍 Yanıtı sınıflandır — eğitim içeriğinde workflow rule'larını pasifleştir
         is_educational = _is_educational_content(final_response)
@@ -174,6 +175,29 @@ def _patch_run_conversation(agent: Any, mode: str = "silent") -> None:
             n_corrections = report.get("corrections", 0)
             details = report.get("details", [])
             mode_now = mode
+
+            # ── Corrective Mode ──────────────────────────────────────────
+            # LLM çıktısını doğrudan düzelt, annotation ekleme
+            if mode_now == "corrective":
+                corrected_text, actual_changes = apply_corrections(
+                    final_response, report,
+                )
+                if actual_changes > 0:
+                    logger.info(
+                        "⚓ Corrective: %d replacement(s) applied (rules=%s)",
+                        actual_changes, report.get("rules_activated", [])[:3],
+                    )
+                    result["final_response"] = corrected_text
+                else:
+                    # Hiçbir düzeltme eşiği geçemediyse annotated'a düş
+                    logger.debug(
+                        "⚓ Corrective: 0 replacements above threshold — falling back to annotated"
+                    )
+                    # Yine de annotated mode'a düş
+                    corrected_text = final_response
+                    mode_now = "annotated"
+                if actual_changes > 0:
+                    return result
 
             # Confidence filtresi — rule_type'a göre adaptive threshold
             # Domain: 0.5 (factual bilgi kritik, düşük confidence'da da göster)

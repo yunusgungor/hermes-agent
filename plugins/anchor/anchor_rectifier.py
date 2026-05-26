@@ -242,6 +242,8 @@ def rectify(user_query: str, llm_output: str,
                 report["details"].append({
                     "original": orig,
                     "corrected": corr,
+                    "full_original": c.original_text,
+                    "full_corrected": c.corrected_text,
                     "severity": sev,
                     "confidence": round(confidence, 2),
                     "rule": c.conflict.rule_id if hasattr(c.conflict, 'rule_id') else "?",
@@ -260,6 +262,66 @@ def rectify(user_query: str, llm_output: str,
     except Exception as e:
         logger.warning("⚓ Anchor rectification failed (non-fatal): %s", e)
         return llm_output, None
+
+
+def apply_corrections(llm_output: str, report: Optional[dict],
+                      confidence_threshold: Optional[dict] = None) -> tuple[str, int]:
+    """
+    LLM çıktısındaki hataları, Anchor raporundaki düzeltmelerle değiştirir.
+
+    Corrective mode için kullanılır — orijinal metin içindeki hatalı kısımları
+    düzeltilmiş versiyonlarıyla değiştirir. Her düzeltme için sadece İLK geçen
+    değiştirilir (str.replace(..., 1)).
+
+    Args:
+        llm_output: LLM'in orijinal çıktısı (string)
+        report: Anchor rectify()'den gelen report dict (veya None)
+        confidence_threshold: Rule type'a göre eşik değerleri.
+            Varsayılan: domain=0.5, hybrid=0.7, workflow=0.8
+
+    Returns:
+        (düzeltilmiş_metin, yapılan_değişiklik_sayısı)
+    """
+    if not report:
+        return llm_output, 0
+
+    if confidence_threshold is None:
+        confidence_threshold = {
+            "domain": 0.5,
+            "hybrid": 0.7,
+            "workflow": 0.8,
+        }
+
+    details = report.get("details", [])
+    if not details:
+        return llm_output, 0
+
+    actual_changes = 0
+    corrected = llm_output
+
+    for d in details:
+        rule_type = d.get("rule_type", "domain")
+        confidence = d.get("confidence", 0)
+        threshold = confidence_threshold.get(rule_type, 0.7)
+
+        # Confidence eşiğini geçemeyenleri atla
+        if confidence < threshold:
+            continue
+
+        # Tam metin (full_*) veya kısaltılmış (original/corrected) kullan
+        orig = d.get("full_original", d.get("original", ""))
+        corr = d.get("full_corrected", d.get("corrected", ""))
+
+        # Güvenlik kontrolleri
+        if not orig or not corr or orig == corr:
+            continue
+
+        # Metin içinde ara ve ilk geçeni değiştir
+        if orig in corrected:
+            corrected = corrected.replace(orig, corr, 1)
+            actual_changes += 1
+
+    return corrected, actual_changes
 
 
 def is_active() -> bool:
