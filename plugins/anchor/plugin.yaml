@@ -1,5 +1,5 @@
-name: anchor-rectifier
-version: 1.0.0
+name: anchor
+version: 1.2.0
 description: "⚓ Anchor Engine — LLM çıktılarını deterministik olarak doğrular ve düzeltir"
 author: "Yunus Güngör"
 kind: standalone
