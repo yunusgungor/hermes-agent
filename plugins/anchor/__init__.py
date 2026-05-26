@@ -1,13 +1,15 @@
 """
-⚓ Anchor Rectifier Plugin — Hermes Agent için deterministik LLM doğrulama.
+⚓ Anchor Guardrail Plugin — Hermes Agent için deterministik LLM doğrulama.
 
-Her LLM yanıtı otomatik olarak Anchor Engine'den geçer.
-v2.1.0: Footer temizliği — sadece annotated mod'da footer var.
-  - annotated (varsayılan): Corrections report + footer
-  - corrective:            Direkt düzeltme, footer yok (invisible)
-  - steering:              GaaA feedback, footer yok (invisible)
-  - interactive:           Full SteeringLoop + LLM re-gen, footer yok (invisible)
-Anchor, steering/interactive/corrective modlarda tamamen background'da çalışır.
+v3.0.0: In-Turn Interleaved Guardrail (tek mod).
+Anchor, LLM'in üretim anında (same conversation turn) devreye girer:
+
+  Round 0: LLM generates → Anchor checks → violations? → feedback appended
+  Round 1: LLM self-corrects → Anchor checks → clean? → done
+  Round 2: Final chance → corrective fallback
+
+Her tur AYNI konuşma içinde — context, tool sonuçları, sistem mesajı korunur.
+Anchor tamamen invisible — kullanıcı sadece temiz çıktıyı görür.
 """
 
 from __future__ import annotations
@@ -15,33 +17,26 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-VERSION = "2.1.0"
+VERSION = "3.0.0"
 logger = logging.getLogger(__name__)
 
-# ── Plug Mode Mapping ─────────────────────────────────────────────────────
-# Config'daki mode değerleri için işleme mantığı
-# annotated:   Klasik rectification (varsayılan), sadece bu mod'da footer var
-# corrective:  Direkt metin düzeltmesi — invisible
-# steering:    GaaA structured feedback — invisible
-# interactive: Tam steering loop (LLM re-gen) + posthoc fallback — invisible
+# ── Config ────────────────────────────────────────────────────────────────
+
+_MAX_ANCHOR_ROUNDS = 3  # Maksimum interleaved düzeltme turu
 
 
 def register(ctx: Any) -> None:
     """Plugin kaydı."""
-    logger.info("⚓ Anchor Rectifier plugin v%s loading...", VERSION)
+    logger.info("⚓ Anchor Guardrail plugin v%s loading...", VERSION)
 
-    # 🔥 Engine'i plugin yükleme anında başlat (her session'da rebuild önler)
-    # Singleton olduğu için tüm session'lar paylaşır — ilk yanıt kaçmaz
     try:
         from plugins.anchor.anchor_rectifier import init_engine, get_rules_path
         _preload_engine(rules_path=get_rules_path())
     except Exception:
         logger.debug("⚓ Engine preload deferred to session start")
 
-    # Register on_session_start hook
     ctx.register_hook("on_session_start", _on_session_start)
-
-    logger.info("⚓ Anchor Rectifier plugin v%s loaded", VERSION)
+    logger.info("⚓ Anchor Guardrail plugin v%s loaded", VERSION)
 
 
 def _preload_engine(rules_path: str = None) -> None:
@@ -55,18 +50,17 @@ def _preload_engine(rules_path: str = None) -> None:
 
 
 def _read_anchor_config_from_file() -> dict:
-    """Config dosyasını doğrudan oku — agent.config'a güvenme (AIAgent'te yok)."""
+    """Config dosyasını oku."""
     try:
-        from hermes_cli.config import load_config, get_config_path
+        from hermes_cli.config import load_config
         cfg = load_config()
         if cfg and isinstance(cfg, dict):
             anchor_cfg = cfg.get("anchor", {})
             if isinstance(anchor_cfg, dict):
                 return anchor_cfg
     except Exception as exc:
-        logger.debug("⚓ Config file read failed (%s), trying YAML direct", exc)
+        logger.debug("⚓ Config read failed (%s)", exc)
 
-    # Fallback: YAML'i doğrudan parse et
     try:
         import os
         import yaml
@@ -80,8 +74,8 @@ def _read_anchor_config_from_file() -> dict:
                 anchor_cfg = cfg.get("anchor", {})
                 if isinstance(anchor_cfg, dict):
                     return anchor_cfg
-    except Exception as exc:
-        logger.debug("⚓ YAML direct read also failed: %s", exc)
+    except Exception:
+        pass
 
     return {}
 
@@ -93,257 +87,34 @@ def _on_session_start(**kwargs: Any) -> None:
         logger.debug("⚓ No agent in on_session_start — skipping")
         return
 
-    # Anchor config'ini DOĞRUDAN config dosyasından oku (AIAgent.config yok!)
     anchor_config = _read_anchor_config_from_file()
 
     if not anchor_config.get("enabled", True):
         logger.info("⚓ Anchor disabled in config")
         return
 
-    # Import'ları en başta yap — scope hatasını önler
     from plugins.anchor.anchor_rectifier import (
         init_engine, is_active, get_rules_path,
     )
 
     rules_path = anchor_config.get("rules_path", get_rules_path())
     use_embedding = anchor_config.get("use_embedding", False)
-    mode = anchor_config.get("mode", "annotated")
 
     logger.debug(
-        "⚓ Config loaded: mode=%s, rules_path=%s, use_embedding=%s",
-        mode, rules_path, use_embedding,
+        "⚓ Config: rules_path=%s, use_embedding=%s",
+        rules_path, use_embedding,
     )
 
-    # 🔥 KRİTİK: Önce PATCH uygula — engine hazır olmasa bile wrapper sarılır
-    # rectify() engine None ise pass-through yapar, hazır olunca otomatik devreye girer
-    _patch_run_conversation(agent, mode=mode)
+    # Önce PATCH uygula — engine hazır olmasa bile wrapper sarılır
+    _patch_run_conversation(agent)
 
-    # Sonra engine'i başlat (singleton — register'da preload edildiyse anında döner)
+    # Engine'i başlat (singleton)
     engine = init_engine(rules_path=rules_path, use_embedding=use_embedding)
 
     if not is_active():
         logger.warning("⚓ Engine not ready — responses pass through until engine initializes")
     else:
-        logger.info(
-            "⚓ Anchor active — every response will be rectified (mode=%s)",
-            mode,
-        )
-
-
-# ── Footer Builders ──────────────────────────────────────────────────────
-# Seçenek 2: Sadece müdahale olduğunda detay göster.
-# Hiçbir şey düzeltilmediyse TAMAMEN SESSİZ.
-
-
-def _build_anchor_footer(
-    report: dict,
-    filtered_details: list[dict],
-    rules_count: int,
-) -> str:
-    """
-    Anchor düzeltme raporunu kullanıcıya gösteren footer.
-
-    Format:
-    ━━━ Anchor ▸ 23 kural denetlendi ⚡ 2 düzeltme:
-    • naming-convention: `getData` → `fetchData`
-    • tdd-cycle: Test yazılmadan implementasyon önerildi → uyarı eklendi
-
-    Hiç düzeltme yoksa boş string döndürür.
-    """
-    n = len(filtered_details)
-    if n == 0:
-        return ""
-
-    # Kural isimlerini kısalt
-    rules_str = ", ".join(report.get("rules_activated", [])[:3])
-
-    lines = [
-        "",
-        f"━━━ Anchor ▸ {rules_count} kural denetlendi ⚡ {n} düzeltme:",
-    ]
-
-    for d in filtered_details[:5]:
-        rule = d.get("rule", "?")
-        orig = d.get("original", "").strip()[:80]
-        corr = d.get("corrected", "").strip()[:80]
-
-        if orig and corr and orig != corr:
-            lines.append(f"• `{rule}`: ~~{orig}~~ → **{corr}**")
-        else:
-            # Sadece uyarı (replace edilemeyen)
-            lines.append(f"• `{rule}`: {orig[:100]} → ⚠️ düzeltme önerisi")
-
-    if n > 5:
-        lines.append(f"… ve {n - 5} düzeltme daha")
-
-    if rules_str:
-        lines.append(f"📋 {rules_str}")
-
-    return "\n".join(lines)
-
-
-# ── Mode-specific post-processors ─────────────────────────────────────────
-
-
-def _process_posthoc_mode(
-    final_response: str,
-    report: Optional[dict],
-    report_details: list[dict],
-    rules_count: int,
-    result: dict,
-) -> None:
-    """Posthoc mod: eski davranış — corrections report + footer."""
-    footer = _build_anchor_footer(report, report_details, rules_count)
-    if footer:
-        result["final_response"] = (result.get("final_response") or final_response) + footer
-
-
-def _process_corrective_mode(
-    final_response: str,
-    report: Optional[dict],
-    report_details: list[dict],
-    rules_count: int,
-    result: dict,
-    mode: str,
-) -> None:
-    """Corrective mod: direkt düzeltme — footer yok, Anchor invisible."""
-    from plugins.anchor.anchor_rectifier import apply_corrections
-
-    # Corrective replacement
-    corrected_text, actual_changes = apply_corrections(
-        final_response, report,
-    )
-    if actual_changes > 0:
-        logger.info(
-            "⚓ Corrective: %d replacement(s) applied (rules=%s)",
-            actual_changes, report.get("rules_activated", [])[:3] if report else [],
-        )
-        result["final_response"] = corrected_text
-
-
-def _process_steering_mode(
-    final_response: str,
-    user_message: str,
-    skip_workflow_rules: bool,
-    report: Optional[dict],
-    rules_count: int,
-    result: dict,
-) -> None:
-    """Steering mod: GaaA structured feedback — footer yok, Anchor invisible."""
-    from plugins.anchor.anchor_rectifier import generate_steering_feedback
-
-    # Structured feedback üret
-    feedback_dict = generate_steering_feedback(
-        user_query=user_message,
-        llm_output=final_response,
-        skip_workflow_rules=skip_workflow_rules,
-    )
-
-    if feedback_dict:
-        logger.info(
-            "⚓ Steering: %d structured feedback items (%d rules, severity=%s)",
-            feedback_dict.get("total_violations", 0),
-            feedback_dict.get("rule_count", 0),
-            feedback_dict.get("max_severity", "NONE"),
-        )
-
-        # Steering: Kullanıcıya footer YOK — Anchor tamamen invisible
-        # İhlaller log'da tutulur, kullanıcı sadece LLM çıktısını görür
-    else:
-        # Violation yok — sessiz geç
-        pass
-
-
-def _process_interactive_mode(
-    final_response: str,
-    user_message: str,
-    skip_workflow_rules: bool,
-    agent: Any,
-    rules_count: int,
-    result: dict,
-) -> None:
-    """Interactive mod: tam steering loop + LLM re-generation.
-
-    Bu mod, SteeringLoop.run()'u HermesLLMGenerator ile çalıştırarak:
-    1. Post-hoc corrective round (Round 0)
-    2. Structured feedback + escalation kararı
-    3. LLM re-generation (eğer violation devam ediyor ve tükenme yoksa)
-    4. Round 1+ analizi
-    5. Tükenme veya yakınsama → döngü sonu
-
-    Sonuç: corrected output — footer yok, Anchor invisible.
-    """
-    from plugins.anchor.anchor_rectifier import (
-        HermesLLMGenerator,
-        steering_posthoc,
-        create_steering_loop,
-    )
-
-    # Önce post-hoc steering dene (corrective + feedback)
-    steering_result = steering_posthoc(
-        user_query=user_message,
-        llm_output=final_response,
-        skip_workflow_rules=skip_workflow_rules,
-    )
-
-    corrected_output = steering_result["corrected"]
-    has_violations = (
-        steering_result["feedback"] is not None
-        and steering_result["feedback"].get("total_violations", 0) > 0
-    )
-    is_exhausted = steering_result["is_exhausted"]
-
-    # Interactive loop: eğer violation varsa ve tükenme yoksa LLM re-gen dene
-    if has_violations and not is_exhausted:
-        try:
-            generator = HermesLLMGenerator(agent)
-            loop = create_steering_loop(generator=generator)
-
-            # SteeringLoop.run() — multi-round LLM re-generation
-            history = loop.run(
-                user_query=user_message,
-                llm_output=corrected_output,
-            )
-
-            if history and history.rounds:
-                last_round = history.rounds[-1]
-                corrected_output = last_round.corrected or corrected_output
-
-                logger.info(
-                    "⚓ Interactive steering completed: %d rounds, "
-                    "last round corrections=%d",
-                    history.total_rounds,
-                    last_round.correction_count,
-                )
-
-            # SteeringLoop.run() çıktısını kullan
-            steering_result["corrected"] = corrected_output
-            steering_result["total_rounds"] = (
-                history.total_rounds if history else 1
-            )
-            steering_result["is_exhausted"] = (
-                history.rounds[-1].exhaustion.is_exhausted
-                if history and history.rounds and history.rounds[-1].exhaustion
-                else False
-            )
-
-            # Escalation level'ı güncelle
-            if last_round and last_round.escalation:
-                steering_result["escalation_level"] = last_round.escalation.level.name
-                steering_result["history_summary"] = history.summary()
-
-            # Re-gen output'u kullan
-            if corrected_output != final_response:
-                result["final_response"] = corrected_output
-
-        except Exception as e:
-            logger.warning(
-                "⚓ Interactive LLM re-generation failed: %s — "
-                "using post-hoc result", e,
-            )
-
-    # Interactive: Kullanıcıya footer YOK — Anchor tamamen invisible
-    # corrected_output zaten result'a yazıldı (line 460)
+        logger.info("⚓ Anchor active — interleaved guardrail enabled (max_rounds=%d)", _MAX_ANCHOR_ROUNDS)
 
 
 # ── Confidence Filter ─────────────────────────────────────────────────────
@@ -360,23 +131,68 @@ def _passes_threshold(d: dict) -> bool:
     return conf >= 0.7
 
 
+# ── Feedback Builder ──────────────────────────────────────────────────────
+
+
+def _build_feedback_message(
+    filtered_details: list[dict],
+    report: dict,
+    round_num: int,
+    max_rounds: int,
+) -> str:
+    """LLM'in kendini düzeltmesi için Anchor feedback mesajı oluştur.
+
+    Bu mesaj conversation_history'e user mesajı olarak eklenir.
+    LLM kendi output'unu + bu feedback'i görüp doğal olarak düzeltir.
+    """
+    parts = [
+        "Aşağıdaki sorunlar tespit edildi, lütfen yanıtınızı düzeltin:",
+        "",
+    ]
+
+    for i, d in enumerate(filtered_details, 1):
+        rule = d.get("rule", "?")
+        severity = d.get("severity", "INFO")
+        orig = d.get("original", "").strip()[:120]
+        corr = d.get("corrected", "").strip()[:120]
+
+        line = f"{i}. **{rule}** [{severity}]"
+        if orig and corr and orig != corr:
+            line += f": `{orig}` → `{corr}`"
+        elif orig:
+            line += f": `{orig}` — düzeltilmeli"
+        parts.append(line)
+
+    if report.get("rules_activated"):
+        parts.extend([
+            "",
+            f"İhlal edilen kurallar: {', '.join(report['rules_activated'][:5])}",
+        ])
+
+    parts.extend([
+        "",
+        "Önceki yanıtınızı bu düzeltmelere göre güncelleyin. "
+        "Anchor notlarını yanıta eklemeyin — sadece içeriği düzeltin, "
+        "yanıtınızın doğal akışını ve anlamını koruyun.",
+        f"(Anchor — tur {round_num + 1}/{max_rounds})",
+    ])
+
+    return "\n".join(parts)
+
+
 # ── Main Patch ────────────────────────────────────────────────────────────
 
 
-def _patch_run_conversation(agent: Any, mode: str = "annotated") -> None:
-    """
-    AIAgent.run_conversation() metodunu Anchor post-processing ile saran wrapper.
+def _patch_run_conversation(agent: Any) -> None:
+    """AIAgent.run_conversation()'ı interleaved guardrail ile saran wrapper.
 
-    v2.1.0: Footer temizliği — sadece annotated mod'da footer var:
-      - annotated:   Eski davranış (varsayılan), corrections report + footer
-      - corrective:  Direkt metin düzeltmesi — footer yok, invisible
-      - steering:    GaaA structured feedback + escalation ladder — footer yok, invisible
-      - interactive: Tam steering loop (LLM re-gen) + posthoc fallback — footer yok, invisible
+    v3.0.0: In-Turn Interleaved Guardrail.
+    Artık 4 mod yok — tek bir akış:
+      Round 0: LLM generates → Anchor checks → clean? → done
+      Round 1-2: LLM self-corrects with feedback → Anchor checks
+      Fallback: Corrective replacement
 
-    CLI (interactive + -q): agent.run_conversation()
-    Gateway (Telegram, Discord): agent.run_conversation()
-    API Server: agent.run_conversation()
-    chat() metodu: sadece run_conversation()'ı çağıran wrapper
+    Anchor INVISIBLE — kullanıcı sadece temiz çıktıyı görür.
     """
     original_run_conversation = agent.run_conversation
 
@@ -387,88 +203,94 @@ def _patch_run_conversation(agent: Any, mode: str = "annotated") -> None:
         task_id: str = None,
         **kwargs: Any,
     ) -> dict:
-        """Anchor post-processing ile run_conversation."""
-        result = original_run_conversation(
-            user_message=user_message,
-            system_message=system_message,
-            conversation_history=conversation_history,
-            task_id=task_id,
-            **kwargs,
-        )
+        """Interleaved guardrail ile run_conversation."""
+        import copy
 
-        # final_response yoksa veya None ise Anchor çalıştırma
-        final_response = result.get("final_response")
-        if not final_response:
-            return result
+        original_user_message = user_message
+        current_history = copy.deepcopy(conversation_history) if conversation_history else None
 
-        from plugins.anchor.anchor_rectifier import (
-            rectify,
-            _is_educational_content,
-            _anchor_engine,
-        )
+        for round_num in range(_MAX_ANCHOR_ROUNDS):
+            result = original_run_conversation(
+                user_message=user_message,
+                system_message=system_message,
+                conversation_history=current_history,
+                task_id=task_id,
+                **kwargs,
+            )
 
-        # 🔍 Yanıtı sınıflandır — eğitim içeriğinde workflow rule'larını pasifleştir
-        is_educational = _is_educational_content(final_response)
-        if is_educational:
+            final_response = result.get("final_response")
+            if not final_response:
+                return result
+
+            # ── Anchor check ─────────────────────────────────────────
+            from plugins.anchor.anchor_rectifier import (
+                rectify,
+                _is_educational_content,
+                _anchor_engine,
+            )
+
+            is_educational = _is_educational_content(final_response)
+            if is_educational:
+                logger.debug("⚓ Educational content — workflow rules disabled")
+
+            _, report = rectify(
+                user_query=original_user_message,
+                llm_output=final_response,
+                skip_workflow_rules=is_educational,
+            )
+
+            # No violations → clean, done
+            if not report or not report.get("details"):
+                logger.debug("⚓ Round %d: clean — returning response", round_num)
+                return result
+
+            # Confidence filter
+            report_details = report.get("details", [])
+            filtered = [d for d in report_details if _passes_threshold(d)]
+            if not filtered:
+                logger.debug(
+                    "⚓ Round %d: %d violations filtered out (all below threshold) — returning",
+                    round_num, len(report_details),
+                )
+                return result
+
+            logger.info(
+                "⚓ Round %d/%d: %d violations (%d rules)",
+                round_num + 1, _MAX_ANCHOR_ROUNDS,
+                len(filtered), report.get("corrections", 0),
+            )
+
+            # Last round → corrective fallback, then done
+            if round_num >= _MAX_ANCHOR_ROUNDS - 1:
+                from plugins.anchor.anchor_rectifier import apply_corrections
+                corrected, actual = apply_corrections(final_response, report)
+                if actual > 0:
+                    logger.info(
+                        "⚓ Fallback: %d corrective replacement(s) applied",
+                        actual,
+                    )
+                    result["final_response"] = corrected
+                return result
+
+            # ── Build feedback and append to conversation ────────────
+            feedback_text = _build_feedback_message(
+                filtered, report, round_num, _MAX_ANCHOR_ROUNDS,
+            )
+
+            # Append assistant response + anchor feedback to history
+            if current_history is None:
+                current_history = []
+            current_history.append({"role": "assistant", "content": final_response})
+            current_history.append({"role": "user", "content": feedback_text})
+
+            # Next round: user_message becomes empty (feedback is in history)
+            user_message = ""
             logger.debug(
-                "⚓ Educational content detected — workflow rules disabled for this response"
-            )
-
-        skip_workflow_rules = is_educational
-
-        # ── 0. Engine'den kural sayısını al ─────────────────────────────
-        rules_count = 0
-        engine = _anchor_engine
-        if engine and hasattr(engine, "store") and hasattr(engine.store, "_rule_meta"):
-            rules_count = len(engine.store._rule_meta)
-
-        # ── 1. Rectification (her modda ortak) ──────────────────────────
-        _, report = rectify(
-            user_query=user_message,
-            llm_output=final_response,
-            skip_workflow_rules=skip_workflow_rules,
-        )
-
-        # ── 2. Confidence Filtresi ──────────────────────────────────────
-        report_details = report.get("details", []) if report else []
-        filtered_details = [d for d in report_details if _passes_threshold(d)]
-        filtered_out = len(report_details) - len(filtered_details)
-
-        if filtered_out > 0:
-            logger.debug(
-                "⚓ Filtered %d/%d corrections below threshold (domain=0.5, hybrid=0.7)",
-                filtered_out, len(report_details),
-            )
-
-        # ── 3. Mod seçimi ───────────────────────────────────────────────
-        mode_lower = mode.lower()
-
-        if mode_lower == "corrective":
-            _process_corrective_mode(
-                final_response, report, filtered_details,
-                rules_count, result, mode,
-            )
-        elif mode_lower == "steering":
-            _process_steering_mode(
-                final_response, user_message, skip_workflow_rules,
-                report, rules_count, result,
-            )
-        elif mode_lower == "interactive":
-            _process_interactive_mode(
-                final_response, user_message, skip_workflow_rules,
-                agent, rules_count, result,
-            )
-        else:  # annotated (default) veya diğer
-            _process_posthoc_mode(
-                final_response, report, filtered_details,
-                rules_count, result,
+                "⚓ Round %d: feedback injected (%d chars) — continuing",
+                round_num, len(feedback_text),
             )
 
         return result
 
     agent.run_conversation = anchored_run_conversation
-    # chat() metodu zaten run_conversation()'ı çağırdığı için otomatik kapsanır
-    logger.debug(
-        "⚓ AIAgent.run_conversation() patched with Anchor v%s (mode=%s)",
-        VERSION, mode,
-    )
+    logger.debug("⚓ AIAgent.run_conversation() patched with Anchor v%s (interleaved guardrail)", VERSION)
