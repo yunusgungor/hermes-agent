@@ -2,26 +2,28 @@
 ⚓ Anchor Rectifier Plugin — Hermes Agent için deterministik LLM doğrulama.
 
 Her LLM yanıtı otomatik olarak Anchor Engine'den geçer.
-v2.0.0: v5.0 Active Steering entegrasyonu:
-  - posthoc mod (varsayılan): eski davranış, report + visibility footer
-  - corrective mod: direkt düzeltme uygula
-  - steering mod: GaaA structured feedback + escalation ladder + exhaustion
-  - interactive mod (LLM re-gen): SteeringLoop.run() ile tam döngü
+v2.1.0: Footer temizliği — sadece annotated mod'da footer var.
+  - annotated (varsayılan): Corrections report + footer
+  - corrective:            Direkt düzeltme, footer yok (invisible)
+  - steering:              GaaA feedback, footer yok (invisible)
+  - interactive:           Full SteeringLoop + LLM re-gen, footer yok (invisible)
+Anchor, steering/interactive/corrective modlarda tamamen background'da çalışır.
 """
+
 from __future__ import annotations
 
 import logging
 from typing import Any, Optional
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"
 logger = logging.getLogger(__name__)
 
 # ── Plug Mode Mapping ─────────────────────────────────────────────────────
 # Config'daki mode değerleri için işleme mantığı
-# posthoc:     Klasik rectification (varsayılan), corrections report + footer
-# corrective:  Direkt metin düzeltmesi uygula
-# steering:    GaaA structured feedback + escalation ladder
-# interactive: Tam steering loop (LLM re-gen) [future]
+# annotated:   Klasik rectification (varsayılan), sadece bu mod'da footer var
+# corrective:  Direkt metin düzeltmesi — invisible
+# steering:    GaaA structured feedback — invisible
+# interactive: Tam steering loop (LLM re-gen) + posthoc fallback — invisible
 
 
 def register(ctx: Any) -> None:
@@ -180,122 +182,6 @@ def _build_anchor_footer(
     return "\n".join(lines)
 
 
-def _build_steering_footer(
-    feedback_dict: dict,
-    report: Optional[dict] = None,
-    rules_count: int = 0,
-) -> str:
-    """
-    Steering modu için structured feedback footer'ı.
-
-    Format:
-    ━━━ Anchor v5.0 STEERING ▸ 23 kural · 3 violation [ERROR]
-    🟠 Kural [tdd-cycle]: Adım 2 atlanmış — RED test yazılmadı
-        → Önce RED test yaz, sonra implement et (%92 güven)
-    📋 tdd-cycle, clean-arch | İçerik: factual | Merdiven: REGENERATE
-
-    Hiç violation yoksa boş string döndürür.
-    """
-    if not feedback_dict or not feedback_dict.get("items"):
-        return ""
-
-    items = feedback_dict.get("items", [])
-    total = feedback_dict.get("total_violations", 0)
-    max_sev = feedback_dict.get("max_severity", "INFO")
-    content_type = feedback_dict.get("content_type", "factual")
-
-    # Escalation level (report'tan veya feedback_dict'ten)
-    escalation_level = feedback_dict.get("escalation_level", None)
-
-    severity_icon = {
-        "CRITICAL": "🔴",
-        "ERROR": "🟠",
-        "WARNING": "🟡",
-        "INFO": "🔵",
-    }.get(max_sev, "⚪")
-
-    lines = [
-        "",
-        f"━━━ Anchor v5.0 STEERING ▸ {rules_count} kural · "
-        f"{total} violation {severity_icon}[{max_sev}]",
-    ]
-
-    for item in items[:5]:
-        sev_icon = {
-            "CRITICAL": "🔴",
-            "ERROR": "🟠",
-            "WARNING": "🟡",
-            "INFO": "🔵",
-        }.get(item.get("severity", "INFO"), "⚪")
-
-        rule = item.get("rule", "?")
-        violation = item.get("violation", "").strip()[:100]
-        correction = item.get("correction", "").strip()[:80]
-        confidence = item.get("confidence", 0)
-
-        lines.append(
-            f"{sev_icon} Kural [{rule}]: {violation}"
-        )
-        if correction:
-            confidence_str = f" (%{confidence * 100:.0f} güven)" if confidence > 0 else ""
-            lines.append(f"    → {correction}{confidence_str}")
-
-    if total > 5:
-        lines.append(f"… ve {total - 5} violation daha")
-
-    # Status line
-    status_parts = []
-    if rules_str := (
-        ", ".join(report.get("rules_activated", [])[:3])
-        if report and report.get("rules_activated")
-        else ""
-    ):
-        status_parts.append(f"📋 {rules_str}")
-    status_parts.append(f"İçerik: {content_type}")
-    if escalation_level:
-        status_parts.append(f"Merdiven: {escalation_level}")
-
-    if status_parts:
-        lines.append(" | ".join(status_parts))
-
-    return "\n".join(lines)
-
-
-def _build_interactive_footer(
-    history_summary: str,
-    escalation_level: str,
-    is_exhausted: bool,
-    total_rounds: int,
-    correction_count: int,
-    rules_count: int,
-) -> str:
-    """
-    Interactive mod için steering loop sonuç footer'ı.
-
-    Format:
-    ━━ Anchor v5.0 INTERACTIVE ▸ 23 kural · 3 tur · 5→1 violation
-    Merdiven: CORRECT ⛔ Tükendi: Stagnasyon...
-    """
-    lines = [
-        "",
-        f"━━━ Anchor v5.0 INTERACTIVE ▸ {rules_count} kural · "
-        f"{total_rounds} tur",
-    ]
-
-    lines.append(f"Merdiven: {escalation_level}")
-    if is_exhausted:
-        lines.append("⛔ Tükendi — corrective fallback uygulandı")
-
-    # History summary kısaltması
-    if history_summary:
-        # İlk satırı al (özet)
-        first_line = history_summary.split("\n")[0] if history_summary else ""
-        if first_line:
-            lines.append(f"📊 {first_line}")
-
-    return "\n".join(lines)
-
-
 # ── Mode-specific post-processors ─────────────────────────────────────────
 
 
@@ -320,7 +206,7 @@ def _process_corrective_mode(
     result: dict,
     mode: str,
 ) -> None:
-    """Corrective mod: direkt düzeltme + footer."""
+    """Corrective mod: direkt düzeltme — footer yok, Anchor invisible."""
     from plugins.anchor.anchor_rectifier import apply_corrections
 
     # Corrective replacement
@@ -334,11 +220,6 @@ def _process_corrective_mode(
         )
         result["final_response"] = corrected_text
 
-    # Her durumda footer ekle
-    footer = _build_anchor_footer(report, report_details, rules_count)
-    if footer:
-        result["final_response"] = (result.get("final_response") or final_response) + footer
-
 
 def _process_steering_mode(
     final_response: str,
@@ -348,7 +229,7 @@ def _process_steering_mode(
     rules_count: int,
     result: dict,
 ) -> None:
-    """Steering mod: GaaA structured feedback + escalation ladder."""
+    """Steering mod: GaaA structured feedback — footer yok, Anchor invisible."""
     from plugins.anchor.anchor_rectifier import generate_steering_feedback
 
     # Structured feedback üret
@@ -366,14 +247,10 @@ def _process_steering_mode(
             feedback_dict.get("max_severity", "NONE"),
         )
 
-        # Steering footer'ı
-        footer = _build_steering_footer(
-            feedback_dict, report, rules_count,
-        )
-        if footer:
-            result["final_response"] = (result.get("final_response") or final_response) + footer
+        # Steering: Kullanıcıya footer YOK — Anchor tamamen invisible
+        # İhlaller log'da tutulur, kullanıcı sadece LLM çıktısını görür
     else:
-        # Violation yok — sessiz geç (eski davranış)
+        # Violation yok — sessiz geç
         pass
 
 
@@ -394,7 +271,7 @@ def _process_interactive_mode(
     4. Round 1+ analizi
     5. Tükenme veya yakınsama → döngü sonu
 
-    Sonuç: corrected output + interactive footer
+    Sonuç: corrected output — footer yok, Anchor invisible.
     """
     from plugins.anchor.anchor_rectifier import (
         HermesLLMGenerator,
@@ -465,17 +342,8 @@ def _process_interactive_mode(
                 "using post-hoc result", e,
             )
 
-    # Interactive footer
-    footer = _build_interactive_footer(
-        history_summary=steering_result["history_summary"],
-        escalation_level=steering_result["escalation_level"],
-        is_exhausted=steering_result["is_exhausted"],
-        total_rounds=steering_result["total_rounds"],
-        correction_count=steering_result["correction_count"],
-        rules_count=rules_count,
-    )
-    if footer:
-        result["final_response"] = (result.get("final_response") or final_response) + footer
+    # Interactive: Kullanıcıya footer YOK — Anchor tamamen invisible
+    # corrected_output zaten result'a yazıldı (line 460)
 
 
 # ── Confidence Filter ─────────────────────────────────────────────────────
@@ -499,11 +367,11 @@ def _patch_run_conversation(agent: Any, mode: str = "annotated") -> None:
     """
     AIAgent.run_conversation() metodunu Anchor post-processing ile saran wrapper.
 
-    v2.0.0: Steering mod desteği — mode değerleri:
-      - annotated:   Eski davranış (varsayılan), visibility footer
-      - corrective:  Direkt metin düzeltmesi + footer
-      - steering:    GaaA structured feedback + escalation ladder
-      - interactive: Tam steering loop (LLM re-gen) + posthoc fallback
+    v2.1.0: Footer temizliği — sadece annotated mod'da footer var:
+      - annotated:   Eski davranış (varsayılan), corrections report + footer
+      - corrective:  Direkt metin düzeltmesi — footer yok, invisible
+      - steering:    GaaA structured feedback + escalation ladder — footer yok, invisible
+      - interactive: Tam steering loop (LLM re-gen) + posthoc fallback — footer yok, invisible
 
     CLI (interactive + -q): agent.run_conversation()
     Gateway (Telegram, Discord): agent.run_conversation()
